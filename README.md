@@ -42,7 +42,7 @@ A 4-screen onboarding flow (`src/screens/OnboardingScreen.tsx`) explains the buf
 ## System-level "open app" shortcuts
 
 - **iOS**: an `AppIntent` (`OpenCameraIntent` in `ios/VoiceCamBuffer/OpenCameraIntent.swift`) is registered via `AppShortcutsProvider`, exposing "Abrir Peguei" to Siri and Spotlight. After installing the app once, users can also add a custom Siri phrase for it from the **Shortcuts** app (Settings are picked up automatically; no manual registration needed for the default phrases).
-- **Android**: an App Action (`android/app/src/main/res/xml/actions.xml` + `shortcuts.xml`) maps Google Assistant's "open app feature" intent to a `peguei://camera` deep link on `MainActivity`. To test it locally, use the [App Actions Test Tool](https://developer.android.com/reference/app-actions-test-tool) (`aatt`) against the built APK, or trigger `adb shell am start -a android.intent.action.VIEW -d "peguei://camera" com.peguei.app`.
+- **Android**: an App Action (`android/app/src/main/res/xml/actions.xml` + `shortcuts.xml`) maps Google Assistant's "open app feature" intent to a `peguei://camera` deep link on `MainActivity`. To test it locally, use the [App Actions Test Tool](https://developer.android.com/reference/app-actions-test-tool) (`aatt`) against the built APK, or trigger `adb shell am start -a android.intent.action.VIEW -d "peguei://camera" com.felipenunes.pegueiapp`.
 
 ## Testing
 

@@ -24,4 +24,4 @@ Both are legitimate, commonly-hit Detox limitations with continuously-running na
 
 **Why:** Siri/Spotlight indexing and Google Assistant's App Actions recognition both require either a physical device signed into an Apple ID / Google account, or Google's own **App Actions Test Tool** (`aatt`) run against a Play-Console-registered build — neither is available in this sandboxed environment.
 
-**To unblock:** Test on a physical device (iOS: say "Hey Siri, abrir Peguei" after installing; Android: use `aatt` per the link in `README.md`, or `adb shell am start -a android.intent.action.VIEW -d "peguei://camera" com.peguei.app` as a manual proxy for the deep link half of it).
+**To unblock:** Test on a physical device (iOS: say "Hey Siri, abrir Peguei" after installing; Android: use `aatt` per the link in `README.md`, or `adb shell am start -a android.intent.action.VIEW -d "peguei://camera" com.felipenunes.pegueiapp` as a manual proxy for the deep link half of it).

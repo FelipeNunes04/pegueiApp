@@ -398,7 +398,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.peguei.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.felipenunes.pegueiapp;
 				PRODUCT_NAME = VoiceCamBuffer;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -429,7 +429,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.peguei.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.felipenunes.pegueiapp;
 				PRODUCT_NAME = VoiceCamBuffer;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -444,7 +444,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.peguei.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.felipenunes.pegueiapp.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -616,7 +616,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.peguei.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.felipenunes.pegueiapp.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;

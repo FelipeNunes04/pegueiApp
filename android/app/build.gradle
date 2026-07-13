@@ -79,11 +79,11 @@ android {
 
     namespace "com.voicecambuffer"
     defaultConfig {
-        // Public bundle id is "com.peguei.app" (brand = Peguei); the internal
+        // Public bundle id is "com.felipenunes.pegueiapp" (brand = Peguei); the internal
         // Kotlin package/namespace stays com.voicecambuffer to avoid a full
         // source-tree rename of the native modules built in this project.
         // See DECISIONS.md.
-        applicationId "com.peguei.app"
+        applicationId "com.felipenunes.pegueiapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
