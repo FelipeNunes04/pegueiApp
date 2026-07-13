@@ -1,0 +1,5 @@
+android/**/build
+android/.gradle
+ios/build
+ios/Pods
+node_modules
