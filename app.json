@@ -1,4 +1,9 @@
 {
   "name": "VoiceCamBuffer",
-  "displayName": "Peguei"
+  "displayName": "Peguei",
+  "extra": {
+    "eas": {
+      "projectId": "af11a47f-b1d6-497d-9116-9ad877551505"
+    }
+  }
 }

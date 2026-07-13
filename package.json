@@ -9,7 +9,11 @@
     "start": "react-native start",
     "test": "jest",
     "e2e:build:ios": "detox build -c ios.sim.debug",
-    "e2e:test:ios": "detox test -c ios.sim.debug"
+    "e2e:test:ios": "detox test -c ios.sim.debug",
+    "credentials:ios": "eas credentials --platform ios",
+    "build:ios:preview": "eas build --platform ios --profile preview",
+    "build:ios": "eas build --platform ios --profile production",
+    "submit:ios": "eas submit --platform ios --latest"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
