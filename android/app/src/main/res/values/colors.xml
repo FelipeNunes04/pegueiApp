@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors colors.backgroundDark in src/theme/colors.ts, see BRAND.md. -->
+    <color name="backgroundDark">#0A1414</color>
+</resources>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static shortcut binding the same "open app feature" capability that
+  actions.xml declares, using the current App Actions Test Tool's preferred
+  shortcuts.xml capability-binding format. Kept alongside actions.xml
+  (rather than replacing it) since Assistant surfaces read both.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <capability android:name="actions.intent.OPEN_APP_FEATURE">
+    <intent
+      android:action="android.intent.action.VIEW"
+      android:data="peguei://camera" />
+  </capability>
+  <shortcut
+    android:shortcutId="open_camera"
+    android:enabled="true"
+    android:icon="@mipmap/ic_launcher"
+    android:shortcutShortLabel="@string/shortcut_open_camera_short"
+    android:shortcutLongLabel="@string/shortcut_open_camera_long">
+    <intent
+      android:action="android.intent.action.VIEW"
+      android:data="peguei://camera" />
+    <capability-binding android:key="actions.intent.OPEN_APP_FEATURE" />
+  </shortcut>
+</shortcuts>

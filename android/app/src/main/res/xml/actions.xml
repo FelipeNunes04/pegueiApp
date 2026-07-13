@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Google Assistant App Actions fulfillment mapping. Maps the built-in intent
+  for "open this app to feature X" to the deep link registered on
+  MainActivity's VIEW intent-filter (see AndroidManifest.xml). There is no
+  custom voice-parameter parsing here: Peguei only has one feature to open
+  to (the camera/buffer screen), so the fulfillment is a static URL.
+-->
+<actions>
+  <action intentName="actions.intent.OPEN_APP_FEATURE">
+    <fulfillment urlTemplate="peguei://camera" />
+  </action>
+</actions>

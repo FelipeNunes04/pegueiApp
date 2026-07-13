@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Peguei</string>
+    <string name="shortcut_open_camera_short">Câmera</string>
+    <string name="shortcut_open_camera_long">Abrir Peguei na câmera</string>
+</resources>
