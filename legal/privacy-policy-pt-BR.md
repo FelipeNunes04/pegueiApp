@@ -1,5 +1,5 @@
 > ⚠️ **AVISO — RASCUNHO GERADO AUTOMATICAMENTE, NÃO É ACONSELHAMENTO JURÍDICO.**
-> Este documento foi gerado como ponto de partida e **precisa ser revisado por um advogado** antes de ser publicado nas lojas de aplicativos ou usado com usuários reais. O app processa dados de câmera e armazenamento, e está sujeito à Lei Geral de Proteção de Dados (LGPD) no Brasil, além dos requisitos próprios de privacidade da Apple (App Store) e do Google (Play Store). Preencha os campos entre colchetes `[...]` antes de publicar.
+> Este documento foi gerado como ponto de partida e **precisa ser revisado por um advogado** antes de ser publicado nas lojas de aplicativos ou usado com usuários reais. O app processa dados de câmera, microfone e armazenamento, e está sujeito à Lei Geral de Proteção de Dados (LGPD) no Brasil, além dos requisitos próprios de privacidade da Apple (App Store) e do Google (Play Store). Preencha os campos entre colchetes `[...]` antes de publicar.
 
 # Política de Privacidade — Peguei
 
@@ -16,14 +16,13 @@ O Peguei é desenvolvido por [nome do desenvolvedor/empresa]. Para dúvidas sobr
 O Peguei foi projetado para funcionar **inteiramente no seu aparelho**, sem depender de um servidor para sua função principal. O App acessa:
 
 - **Câmera:** usada para exibir o preview ao vivo e gravar continuamente o buffer de vídeo (a janela deslizante de segundos que permite salvar o que já aconteceu antes de você tocar no botão).
+- **Microfone:** usado para gravar a faixa de áudio que acompanha os clipes salvos.
 - **Armazenamento / Fotos:** usado para salvar os clipes de vídeo finais no seu dispositivo.
-
-O App **não solicita acesso ao microfone** e os clipes salvos **não possuem faixa de áudio** — são vídeos apenas de imagem.
 
 ## 3. O que o App NÃO faz
 
-- **Não envia vídeo, imagem ou preview da câmera para nenhum servidor.** Toda a gravação, o buffer e o salvamento de clipes acontecem localmente, no seu aparelho.
-- **Não usa serviços de terceiros para processar áudio ou voz.** O App não tem nenhum recurso de comando de voz nesta versão.
+- **Não envia vídeo, áudio ou preview da câmera para nenhum servidor.** Toda a gravação, o buffer e o salvamento de clipes acontecem localmente, no seu aparelho.
+- **Não usa serviços de terceiros para processar áudio ou voz.** O áudio captado é gravado apenas na faixa de som do próprio clipe salvo; o App não tem nenhum recurso de comando de voz ou reconhecimento de fala nesta versão.
 - **Não coleta analytics, métricas de uso ou dados de comportamento** nesta versão. [Se isso mudar no futuro, esta seção será atualizada antes da mudança entrar em vigor, e esta política passará a listar o serviço de analytics usado, quais eventos são coletados e a base legal aplicável.]
 - **Não exibe anúncios.**
 - **Não tem cadastro de conta, login ou coleta de dados pessoais** (nome, e-mail, telefone) para o funcionamento do App.
@@ -39,6 +38,7 @@ O App solicita as seguintes permissões, sempre com uma explicação prévia na 
 | Permissão | Por que é necessária |
 |---|---|
 | Câmera | Gravar o preview e o buffer de vídeo contínuo |
+| Microfone | Gravar a faixa de áudio incluída nos clipes salvos |
 | Armazenamento / Fotos | Salvar os clipes de vídeo finais no dispositivo |
 
 Você pode revogar qualquer permissão a qualquer momento nas configurações do seu sistema operacional. Sem a permissão de câmera, o App não consegue executar sua função principal.

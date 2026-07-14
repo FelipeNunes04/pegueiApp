@@ -1,6 +1,6 @@
 # Peguei
 
-Peguei is a React Native app that keeps a rolling circular buffer of camera video and lets you save the last N seconds by tapping a button — think of a boat/dashcam-style "catch the moment that already happened" flow, e.g. for landing a fish. Open the app, leave it running during the activity, and tap the record button whenever something happens; it saves the buffered seconds *before* the tap plus a short post-roll.
+Peguei is a React Native app that keeps a rolling circular buffer of camera video (and audio, via the microphone) and lets you save the last N seconds by tapping a button — think of a boat/dashcam-style "catch the moment that already happened" flow, e.g. for landing a fish. Open the app, leave it running during the activity, and tap the record button when something happens: recording starts, prepending the buffered seconds *before* the tap; tap again to stop, and the saved clip covers everything from that pre-roll through however long you kept recording.
 
 This is a **manual-only, 100% free** app in its current phase: one tap saves a clip, no voice commands, no subscription, no ads. See `BRAND.md` for the visual identity and tone of voice, `DECISIONS.md` for the reasoning behind non-obvious choices, and `BLOCKED.md` for the few things that genuinely need a human (not more engineering).
 
@@ -68,6 +68,5 @@ yarn tsc --noEmit
 
 ## Known limitations
 
-- **No audio track in saved clips.** Clips are video-only (see `DECISIONS.md` → "Audio").
 - **Camera doesn't work in the iOS Simulator.** Use a physical device to validate the actual buffering/recording flow.
 - See `BLOCKED.md` for the Detox synchronization quirk and the on-device verification of the iOS/Android system shortcuts.

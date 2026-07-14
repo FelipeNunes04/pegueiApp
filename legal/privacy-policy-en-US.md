@@ -1,5 +1,5 @@
 > ⚠️ **NOTICE — AUTO-GENERATED DRAFT, NOT LEGAL ADVICE.**
-> This document was generated as a starting point and **must be reviewed by a lawyer** before being published to app stores or used with real users. The app processes camera and storage data and, for Brazilian users, is subject to the LGPD (Lei Geral de Proteção de Dados), in addition to Apple's (App Store) and Google's (Play Store) own privacy requirements. Fill in the bracketed `[...]` fields before publishing.
+> This document was generated as a starting point and **must be reviewed by a lawyer** before being published to app stores or used with real users. The app processes camera, microphone, and storage data and, for Brazilian users, is subject to the LGPD (Lei Geral de Proteção de Dados), in addition to Apple's (App Store) and Google's (Play Store) own privacy requirements. Fill in the bracketed `[...]` fields before publishing.
 
 # Privacy Policy — Peguei
 
@@ -16,14 +16,13 @@ Peguei is developed by [developer/company name]. For privacy questions, contact 
 Peguei is designed to work **entirely on your device**, without relying on a server for its core function. The App accesses:
 
 - **Camera:** used to show the live preview and continuously record the video buffer (the sliding window of seconds that lets you save what already happened before you tap the button).
+- **Microphone:** used to record the audio track included with saved clips.
 - **Storage / Photos:** used to save the final video clips to your device.
-
-The App **does not request microphone access**, and saved clips **have no audio track** — they are video-only.
 
 ## 3. What the App does NOT do
 
-- **It does not send video, images, or the camera preview to any server.** All recording, buffering, and clip saving happen locally, on your device.
-- **It does not use third-party services to process audio or voice.** The App has no voice-command feature in this version.
+- **It does not send video, audio, or the camera preview to any server.** All recording, buffering, and clip saving happen locally, on your device.
+- **It does not use third-party services to process audio or voice.** Captured audio is only recorded into the saved clip's own sound track; the App has no voice-command or speech-recognition feature in this version.
 - **It does not collect analytics, usage metrics, or behavioral data** in this version. [If this changes in the future, this section will be updated before the change takes effect, and this policy will list the analytics service used, which events are collected, and the applicable legal basis.]
 - **It does not display ads.**
 - **It has no account, login, or personal data collection** (name, email, phone number) for the App to function.
@@ -39,6 +38,7 @@ The App requests the following permissions, always with an in-app explanation sh
 | Permission | Why it's needed |
 |---|---|
 | Camera | Recording the live preview and the continuous video buffer |
+| Microphone | Recording the audio track included with saved clips |
 | Storage / Photos | Saving the final video clips to the device |
 
 You can revoke any permission at any time from your operating system's settings. Without camera permission, the App cannot perform its core function.
