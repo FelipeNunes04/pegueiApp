@@ -1,9 +1,10 @@
 {
   "name": "Peguei",
   "displayName": "Peguei",
+  "slug": "peguei",
   "extra": {
     "eas": {
-      "projectId": "af11a47f-b1d6-497d-9116-9ad877551505"
+      "projectId": "7199cbf5-e6f6-4483-bf54-ce2248d9f71b"
     }
   }
 }

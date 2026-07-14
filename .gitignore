@@ -53,6 +53,9 @@ yarn-error.log
 **/fastlane/screenshots
 **/fastlane/test_output
 
+# Detox-generated App Store screenshots (regenerate with yarn screenshots:ios)
+/screenshots
+
 # Bundle artifact
 *.jsbundle
 

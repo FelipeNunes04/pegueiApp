@@ -8,6 +8,9 @@ module.exports = {
       setupTimeout: 120000,
     },
   },
+  artifacts: {
+    rootDir: './screenshots',
+  },
   apps: {
     'ios.debug': {
       type: 'ios.app',
@@ -33,6 +36,18 @@ module.exports = {
       type: 'android.emulator',
       device: { avdName: 'Pixel_API_34' },
     },
+    // App Store screenshot sizes: 6.9" (required) and 6.5" (legacy size
+    // class App Store Connect still accepts screenshots for).
+    simulator69: {
+      type: 'ios.simulator',
+      device: { type: 'iPhone 16 Pro Max' },
+    },
+    simulator65: {
+      type: 'ios.simulator',
+      // Pinned to iOS 17.5: this device type predates the newer runtimes
+      // installed on this Mac, so the default (latest) runtime can't boot it.
+      device: { type: 'iPhone 11 Pro Max', os: 'iOS 17.5' },
+    },
   },
   configurations: {
     'ios.sim.debug': {
@@ -42,6 +57,14 @@ module.exports = {
     'android.emu.debug': {
       device: 'emulator',
       app: 'android.debug',
+    },
+    'ios.sim.screenshots.69': {
+      device: 'simulator69',
+      app: 'ios.debug',
+    },
+    'ios.sim.screenshots.65': {
+      device: 'simulator65',
+      app: 'ios.debug',
     },
   },
 };
