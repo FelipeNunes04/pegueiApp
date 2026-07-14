@@ -39,6 +39,8 @@
 	<string>O Peguei usa o microfone para gravar o áudio dos clipes.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>O Peguei salva os clipes gravados na sua galeria de fotos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>O Peguei pode acessar sua galeria de fotos ao compartilhar um clipe gravado.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
