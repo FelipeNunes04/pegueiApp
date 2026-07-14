@@ -93,9 +93,9 @@ const SLIDES: Slide[] = [
   },
   {
     key: 'tap',
-    title: 'Toque o botão. Só isso.',
+    title: 'Toque para gravar, toque para parar',
     body:
-      'Sem gravar do zero e sem correr contra o tempo: um toque salva o que já estava no buffer, mais alguns segundos depois. O clipe sempre começa antes do toque.',
+      'Sem gravar do zero e sem correr contra o tempo: um toque começa a gravar e já traz junto o que tinha acontecido antes. Toque de novo quando quiser parar — o clipe salvo sempre começa antes do primeiro toque.',
     Illustration: TapIllustration,
   },
   {
@@ -107,7 +107,7 @@ const SLIDES: Slide[] = [
   {
     key: 'welcome',
     title: 'Tudo pronto',
-    body: 'Só faltam duas permissões rápidas pra começar. Boa pescaria — ou o que você for capturar por aí.',
+    body: 'Só faltam três permissões rápidas pra começar. Boa pescaria — ou o que você for capturar por aí.',
     Illustration: WelcomeIllustration,
   },
 ];

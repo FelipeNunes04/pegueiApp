@@ -53,6 +53,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-evenly',
     paddingTop: 12,
   },
-  action: { padding: 8 },
+  // 22px icon + 11px padding on all sides = 44pt tap target (Apple HIG / Material minimum).
+  action: { padding: 11 },
   disabled: { opacity: 0.35 },
 });

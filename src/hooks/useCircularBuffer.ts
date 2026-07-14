@@ -62,7 +62,7 @@ export function useCircularBuffer() {
       }
     } catch (err) {
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Falha ao iniciar o buffer de vídeo.');
+        setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
     }
   }, [bufferSeconds, videoQuality, setPhase, setError]);
@@ -109,14 +109,14 @@ export function useCircularBuffer() {
             }
           } catch (retryErr) {
             if (isMountedRef.current) {
-              setError(retryErr instanceof Error ? retryErr.message : 'Falha ao iniciar a gravação.');
+              setError(retryErr instanceof Error ? retryErr.message : 'Não foi possível iniciar a gravação.');
             }
           }
           return;
         }
       }
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Falha ao iniciar a gravação.');
+        setError(err instanceof Error ? err.message : 'Não foi possível iniciar a gravação.');
       }
     }
   }, [setPhase, setError]);
@@ -158,7 +158,7 @@ export function useCircularBuffer() {
       return clip;
     } catch (err) {
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Falha ao salvar o clipe.');
+        setError(err instanceof Error ? err.message : 'Não foi possível salvar o clipe.');
         // The native buffer keeps running regardless of whether this one
         // save failed -- leaving phase stuck at 'saving' would read as
         // "the buffer stopped working" even though it's still buffering.

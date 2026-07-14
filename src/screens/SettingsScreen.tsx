@@ -16,8 +16,11 @@ export function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} testID="settings-screen">
-      <Text style={styles.section}>Buffer</Text>
-      <Text style={styles.label}>Duração do buffer: {bufferSeconds}s</Text>
+      <Text style={styles.section}>Gravação contínua</Text>
+      <Text style={styles.sectionHint}>
+        Quantos segundos antes de você tocar em gravar ficam guardados no clipe salvo.
+      </Text>
+      <Text style={styles.label}>Tempo guardado: {bufferSeconds}s</Text>
       <Slider
         testID="buffer-seconds-slider"
         minimumValue={BUFFER_SECONDS_MIN}
@@ -46,7 +49,8 @@ export function SettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.backgroundDark },
   content: { padding: 20, paddingBottom: 60 },
-  section: { ...typography.title, fontSize: 16, color: colors.textDark, marginTop: 20, marginBottom: 8 },
+  section: { ...typography.title, fontSize: 16, color: colors.textDark, marginTop: 20, marginBottom: 4 },
+  sectionHint: { ...typography.caption, color: 'rgba(242,245,245,0.6)', marginBottom: 12 },
   label: { ...typography.body, color: 'rgba(242,245,245,0.8)', marginBottom: 4 },
   row: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   pill: {

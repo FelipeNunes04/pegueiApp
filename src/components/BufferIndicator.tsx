@@ -11,13 +11,13 @@ interface Props {
 
 const PHASE_LABEL: Record<RecordingPhase, string> = {
   idle: 'Parado',
-  buffering: 'Ativo',
+  buffering: 'Sempre gravando',
   recording: 'Gravando',
   saving: 'Salvando...',
   error: 'Erro',
 };
 
-/** Compact top-left status badge (scrim + pulsing dot) — communicates "buffer is always on" at a glance without a solid top bar. */
+/** Compact top-left status badge (scrim + pulsing dot) — communicates "the last N seconds are always being kept" at a glance without a solid top bar. */
 export function BufferIndicator({ phase, bufferSeconds }: Props) {
   const pulse = useRef(new Animated.Value(1)).current;
 

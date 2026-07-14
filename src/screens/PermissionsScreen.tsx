@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { usePermissions } from '../hooks/usePermissions';
-import type { PermissionKey, RootStackParamList } from '../types';
+import type { PermissionKey, PermissionStatus, RootStackParamList } from '../types';
 import { PermissionActionButton } from '../components/PermissionActionButton';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
@@ -12,7 +12,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Permissions'>;
 const EXPLANATIONS: Record<PermissionKey, { title: string; description: string }> = {
   camera: {
     title: 'Câmera',
-    description: 'Usada para gravar continuamente o buffer de vídeo e exibir o preview ao vivo.',
+    description: 'Usada para gravar continuamente os últimos segundos e mostrar a imagem ao vivo.',
   },
   storage: {
     title: 'Armazenamento / Fotos',
@@ -22,6 +22,15 @@ const EXPLANATIONS: Record<PermissionKey, { title: string; description: string }
     title: 'Microfone',
     description: 'Usado para gravar o áudio dos clipes.',
   },
+};
+
+// PermissionStatus values are internal state, not copy -- translate before
+// showing them, or a Portuguese screen ends up displaying "Status: denied".
+const STATUS_LABEL: Record<PermissionStatus, string> = {
+  granted: 'Permitida',
+  blocked: 'Bloqueada nas configurações do sistema',
+  denied: 'Ainda não concedida',
+  unknown: 'Verificando...',
 };
 
 const ORDER: PermissionKey[] = ['camera', 'storage', 'microphone'];
@@ -45,7 +54,7 @@ export function PermissionsScreen({ navigation }: Props) {
         <View key={key} style={styles.card} testID={`permission-card-${key}`}>
           <Text style={styles.cardTitle}>{EXPLANATIONS[key].title}</Text>
           <Text style={styles.cardDescription}>{EXPLANATIONS[key].description}</Text>
-          <Text style={styles.status}>Status: {statuses[key]}</Text>
+          <Text style={styles.status}>{STATUS_LABEL[statuses[key]]}</Text>
           <PermissionActionButton
             testID={`permission-action-${key}`}
             label="Permitir acesso"

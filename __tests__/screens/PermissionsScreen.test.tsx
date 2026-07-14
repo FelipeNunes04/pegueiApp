@@ -27,7 +27,7 @@ describe('PermissionsScreen', () => {
       <PermissionsScreen navigation={fakeNavigation} route={{} as never} />,
     );
 
-    expect(getAllByText('Status: denied')).toHaveLength(2);
+    expect(getAllByText('Ainda não concedida')).toHaveLength(2);
     expect(getByTestId('permission-card-camera')).toBeTruthy();
     expect(getByTestId('permission-card-storage')).toBeTruthy();
     expect(getByText(/bloqueada permanentemente/)).toBeTruthy();
