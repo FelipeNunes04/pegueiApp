@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-               BuildableName = "VoiceCamBuffer.app"
-               BlueprintName = "VoiceCamBuffer"
-               ReferencedContainer = "container:VoiceCamBuffer.xcodeproj">
+               BuildableName = "Peguei.app"
+               BlueprintName = "Peguei"
+               ReferencedContainer = "container:Peguei.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "00E356ED1AD99517003FC87E"
-               BuildableName = "VoiceCamBufferTests.xctest"
-               BlueprintName = "VoiceCamBufferTests"
-               ReferencedContainer = "container:VoiceCamBuffer.xcodeproj">
+               BuildableName = "PegueiTests.xctest"
+               BlueprintName = "PegueiTests"
+               ReferencedContainer = "container:Peguei.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
@@ -43,9 +43,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "0CEC033812D00DAA47FCB719"
-               BuildableName = "VoiceCamBufferTests.xctest"
-               BlueprintName = "VoiceCamBufferTests"
-               ReferencedContainer = "container:VoiceCamBuffer.xcodeproj">
+               BuildableName = "PegueiTests.xctest"
+               BlueprintName = "PegueiTests"
+               ReferencedContainer = "container:Peguei.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -65,9 +65,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "VoiceCamBuffer.app"
-            BlueprintName = "VoiceCamBuffer"
-            ReferencedContainer = "container:VoiceCamBuffer.xcodeproj">
+            BuildableName = "Peguei.app"
+            BlueprintName = "Peguei"
+            ReferencedContainer = "container:Peguei.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -82,9 +82,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "VoiceCamBuffer.app"
-            BlueprintName = "VoiceCamBuffer"
-            ReferencedContainer = "container:VoiceCamBuffer.xcodeproj">
+            BuildableName = "Peguei.app"
+            BlueprintName = "Peguei"
+            ReferencedContainer = "container:Peguei.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

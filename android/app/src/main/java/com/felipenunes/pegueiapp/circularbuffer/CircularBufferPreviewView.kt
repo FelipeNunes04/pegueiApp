@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 import android.content.Context
 import android.graphics.SurfaceTexture

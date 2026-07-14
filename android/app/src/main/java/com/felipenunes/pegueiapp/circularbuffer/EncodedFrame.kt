@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 /**
  * A single already-encoded H.264 access unit copied out of a MediaCodec

@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 /** Error codes surfaced to JS via Promise.reject(code, message). */
 object CircularBufferErrorCodes {

@@ -22,7 +22,7 @@ class CircularBufferModule: RCTEventEmitter {
 
     private var moviesDir: URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documents.appendingPathComponent("VoiceCamBufferClips", isDirectory: true)
+        return documents.appendingPathComponent("PegueiClips", isDirectory: true)
     }
 
     @objc(startBuffering:resolver:rejecter:)

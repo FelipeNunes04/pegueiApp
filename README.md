@@ -17,7 +17,7 @@ yarn install
 ```sh
 bundle install          # first time only, installs the pinned CocoaPods version
 cd ios && pod install && cd ..
-yarn ios                 # or open ios/VoiceCamBuffer.xcworkspace in Xcode
+yarn ios                 # or open ios/Peguei.xcworkspace in Xcode
 ```
 
 Note: `IPHONEOS_DEPLOYMENT_TARGET` is 16.0, required by the `AppIntents`-based Siri/Shortcuts integration — see `DECISIONS.md`.
@@ -41,7 +41,7 @@ A 4-screen onboarding flow (`src/screens/OnboardingScreen.tsx`) explains the buf
 
 ## System-level "open app" shortcuts
 
-- **iOS**: an `AppIntent` (`OpenCameraIntent` in `ios/VoiceCamBuffer/OpenCameraIntent.swift`) is registered via `AppShortcutsProvider`, exposing "Abrir Peguei" to Siri and Spotlight. After installing the app once, users can also add a custom Siri phrase for it from the **Shortcuts** app (Settings are picked up automatically; no manual registration needed for the default phrases).
+- **iOS**: an `AppIntent` (`OpenCameraIntent` in `ios/Peguei/OpenCameraIntent.swift`) is registered via `AppShortcutsProvider`, exposing "Abrir Peguei" to Siri and Spotlight. After installing the app once, users can also add a custom Siri phrase for it from the **Shortcuts** app (Settings are picked up automatically; no manual registration needed for the default phrases).
 - **Android**: an App Action (`android/app/src/main/res/xml/actions.xml` + `shortcuts.xml`) maps Google Assistant's "open app feature" intent to a `peguei://camera` deep link on `MainActivity`. To test it locally, use the [App Actions Test Tool](https://developer.android.com/reference/app-actions-test-tool) (`aatt`) against the built APK, or trigger `adb shell am start -a android.intent.action.VIEW -d "peguei://camera" com.felipenunes.pegueiapp`.
 
 ## Testing
@@ -53,7 +53,7 @@ yarn tsc --noEmit
 ```
 
 - Android native buffer logic: `cd android && ./gradlew testDebugUnitTest`
-- iOS native buffer logic: `xcodebuild test -workspace ios/VoiceCamBuffer.xcworkspace -scheme VoiceCamBuffer -only-testing:VoiceCamBufferTests -destination 'platform=iOS Simulator,name=<a simulator you have>'`
+- iOS native buffer logic: `xcodebuild test -workspace ios/Peguei.xcworkspace -scheme Peguei -only-testing:PegueiTests -destination 'platform=iOS Simulator,name=<a simulator you have>'`
 - Detox E2E smoke test (requires a Metro server running in another terminal via `yarn start`, plus `brew install applesimutils` on macOS the first time):
   ```sh
   yarn e2e:build:ios

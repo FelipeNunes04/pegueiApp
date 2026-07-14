@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 import android.os.Environment
 import com.facebook.react.bridge.Promise

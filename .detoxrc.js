@@ -11,9 +11,9 @@ module.exports = {
   apps: {
     'ios.debug': {
       type: 'ios.app',
-      binaryPath: 'ios/build/DerivedData/Build/Products/Debug-iphonesimulator/VoiceCamBuffer.app',
+      binaryPath: 'ios/build/DerivedData/Build/Products/Debug-iphonesimulator/Peguei.app',
       build:
-        'xcodebuild -workspace ios/VoiceCamBuffer.xcworkspace -scheme VoiceCamBuffer -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build/DerivedData',
+        'xcodebuild -workspace ios/Peguei.xcworkspace -scheme Peguei -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build/DerivedData',
     },
     'android.debug': {
       type: 'android.apk',

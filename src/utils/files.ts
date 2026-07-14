@@ -2,7 +2,7 @@ import RNFS from 'react-native-fs';
 import { clearClipThumbnailCache } from './thumbnails';
 import type { SavedClip } from '../types';
 
-export const CLIPS_DIR = `${RNFS.DocumentDirectoryPath}/VoiceCamBufferClips`;
+export const CLIPS_DIR = `${RNFS.DocumentDirectoryPath}/PegueiClips`;
 
 // Native save (`CircularBufferModule.stopManualRecording`) only ever returns
 // `SaveClipResult.durationSeconds` in memory, for the single JS session that

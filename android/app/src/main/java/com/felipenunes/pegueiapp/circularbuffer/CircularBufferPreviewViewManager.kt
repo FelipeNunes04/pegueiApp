@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext

@@ -1,6 +1,8 @@
 # Peguei — Full Audit Report
 
 > **2026-07-11 correction:** this report is a point-in-time snapshot from 2026-07-10. Every wake-word/Picovoice claim below (section C, and related mentions elsewhere) is now stale — the entire feature was removed from the codebase sometime after this audit, and the app shipped as manual-only. See `DECISIONS.md` → "Wake word (removed)" for what's actually true today. Don't treat this file as current state for anything wake-word related.
+>
+> **2026-07-13 correction:** section A's bundle ID (`com.peguei.app`) and every `ios/VoiceCamBuffer/...`/`VoiceCamBufferTests` path below are also stale — the bundle ID was corrected to `com.felipenunes.pegueiapp`, and the whole native project was renamed `VoiceCamBuffer` → `Peguei` (Xcode project/target/scheme, Android package, npm package). See `DECISIONS.md` → "Identity" for current values. This file stays as a historical audit record; it is not re-updated for every later rename.
 
 Status of every checklist item. ✅ = done and verified; ❌ = not done (see note). Items that were already correct before this pass are marked ✅ with a short note; items fixed or built during this pass explain what changed. See `DECISIONS.md` for the reasoning behind non-obvious choices and `BLOCKED.md` for the handful of things that genuinely need you.
 

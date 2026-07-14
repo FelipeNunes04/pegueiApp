@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

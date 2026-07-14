@@ -1,4 +1,4 @@
-package com.voicecambuffer.circularbuffer
+package com.felipenunes.pegueiapp.circularbuffer
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

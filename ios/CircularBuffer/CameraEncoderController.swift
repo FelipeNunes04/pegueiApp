@@ -28,9 +28,9 @@ final class CameraEncoderController: NSObject {
     weak var delegate: CameraEncoderControllerDelegate?
 
     private let session = AVCaptureSession()
-    private let sessionQueue = DispatchQueue(label: "com.voicecambuffer.session")
+    private let sessionQueue = DispatchQueue(label: "com.peguei.session")
     private let videoDataOutput = AVCaptureVideoDataOutput()
-    private let videoDataOutputQueue = DispatchQueue(label: "com.voicecambuffer.videodata")
+    private let videoDataOutputQueue = DispatchQueue(label: "com.peguei.videodata")
 
     private var compressionSession: VTCompressionSession?
     private var formatDescription: CMFormatDescription?
