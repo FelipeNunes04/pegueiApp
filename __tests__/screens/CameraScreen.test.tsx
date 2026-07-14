@@ -17,7 +17,8 @@ const mockedUseZoom = useZoomModule.useZoom as jest.Mock;
 
 const navigateMock = jest.fn();
 const replaceMock = jest.fn();
-const fakeNavigation = { navigate: navigateMock, replace: replaceMock } as never;
+const addListenerMock = jest.fn(() => jest.fn());
+const fakeNavigation = { navigate: navigateMock, replace: replaceMock, addListener: addListenerMock } as never;
 
 function baseCircularBuffer(overrides: Partial<ReturnType<typeof useCircularBufferModule.useCircularBuffer>> = {}) {
   return {

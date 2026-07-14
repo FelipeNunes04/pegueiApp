@@ -84,6 +84,37 @@ export function useCircularBuffer() {
         setPhase('recording');
       }
     } catch (err) {
+      // Returning to this screen (e.g. from Gallery) detaches/reattaches
+      // the native preview, which reopens the camera+mic asynchronously --
+      // tapping record before that finishes surfaces E_NOT_BUFFERING even
+      // though the buffer is about to be ready again. How long the reopen
+      // takes varies (it now also sets up the mic), so poll isBuffering()
+      // for a few seconds instead of guessing a single fixed delay, and
+      // only retry the actual start once it reports ready.
+      const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: unknown }).code : undefined;
+      if (code === 'E_NOT_BUFFERING') {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          if (!isMountedRef.current) {
+            return;
+          }
+          const isBuffering = await CircularBufferModule.isBuffering().catch(() => false);
+          if (!isBuffering) {
+            continue;
+          }
+          try {
+            await CircularBufferModule.startManualRecording();
+            if (isMountedRef.current) {
+              setPhase('recording');
+            }
+          } catch (retryErr) {
+            if (isMountedRef.current) {
+              setError(retryErr instanceof Error ? retryErr.message : 'Falha ao iniciar a gravação.');
+            }
+          }
+          return;
+        }
+      }
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Falha ao iniciar a gravação.');
       }
@@ -128,6 +159,10 @@ export function useCircularBuffer() {
     } catch (err) {
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Falha ao salvar o clipe.');
+        // The native buffer keeps running regardless of whether this one
+        // save failed -- leaving phase stuck at 'saving' would read as
+        // "the buffer stopped working" even though it's still buffering.
+        setPhase('buffering');
       }
       return null;
     }

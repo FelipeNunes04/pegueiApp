@@ -8,6 +8,7 @@ import { useZoom } from '../hooks/useZoom';
 import { usePinchToZoom } from '../hooks/usePinchToZoom';
 import { useSettingsStore } from '../store/settingsStore';
 import { useRecordingStore } from '../store/recordingStore';
+import { useCameraStore } from '../store/cameraStore';
 import { BufferIndicator } from '../components/BufferIndicator';
 import { RecordButton } from '../components/RecordButton';
 import { GalleryButton } from '../components/GalleryButton';
@@ -54,6 +55,19 @@ export function CameraScreen({ navigation }: Props) {
       refreshClips();
     }
   }, [phase, refreshClips]);
+
+  // Navigating away (e.g. to Gallery) and back detaches/reattaches the
+  // native preview, which silently reopens the camera at its
+  // hardware-default zoom -- useZoom's own correction only runs while its
+  // cached zoom range is unset, so it needs to be invalidated on every
+  // refocus, not just the first mount, or the pills keep showing the old
+  // level while the lens has actually reset. See DECISIONS.md "Camera zoom".
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      useCameraStore.getState().invalidateZoomRange();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   return (
     <View style={styles.container} testID="camera-screen">

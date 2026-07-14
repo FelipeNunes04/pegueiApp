@@ -4,6 +4,7 @@ import Foundation
 enum CircularBufferErrorCode {
     static let cameraBusy = "E_CAMERA_BUSY"
     static let cameraPermission = "E_CAMERA_PERMISSION"
+    static let microphonePermission = "E_MICROPHONE_PERMISSION"
     static let encoderInitFailed = "E_ENCODER_INIT_FAILED"
     static let notBuffering = "E_NOT_BUFFERING"
     static let alreadyBuffering = "E_ALREADY_BUFFERING"

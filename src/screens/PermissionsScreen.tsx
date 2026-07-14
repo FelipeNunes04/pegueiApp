@@ -18,9 +18,13 @@ const EXPLANATIONS: Record<PermissionKey, { title: string; description: string }
     title: 'Armazenamento / Fotos',
     description: 'Usado para salvar os clipes finais na galeria do seu dispositivo.',
   },
+  microphone: {
+    title: 'Microfone',
+    description: 'Usado para gravar o áudio dos clipes.',
+  },
 };
 
-const ORDER: PermissionKey[] = ['camera', 'storage'];
+const ORDER: PermissionKey[] = ['camera', 'storage', 'microphone'];
 
 export function PermissionsScreen({ navigation }: Props) {
   const { statuses, requestPermission, allGranted } = usePermissions();
@@ -35,7 +39,7 @@ export function PermissionsScreen({ navigation }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content} testID="permissions-screen">
       <Text style={styles.title}>Antes de começar</Text>
       <Text style={styles.subtitle}>
-        O Peguei precisa de duas permissões. Explicamos cada uma antes de pedir.
+        O Peguei precisa de três permissões. Explicamos cada uma antes de pedir.
       </Text>
       {ORDER.map(key => (
         <View key={key} style={styles.card} testID={`permission-card-${key}`}>

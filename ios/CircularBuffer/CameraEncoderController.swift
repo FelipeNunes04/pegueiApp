@@ -15,10 +15,10 @@ protocol CameraEncoderControllerDelegate: AnyObject {
 }
 
 /// Owns the AVCaptureSession, a VTCompressionSession (H.264 hardware
-/// encoder) and the `FrameRingBuffer` of encoded frames. Video-only (no
-/// audio track): the microphone is a single-consumer resource already
-/// claimed by the wake-word voice processor while listening. See
-/// DECISIONS.md.
+/// encoder) and the `FrameRingBuffer` of encoded video frames, plus a mic
+/// input feeding an `AudioSampleRingBuffer` of retained PCM audio sample
+/// buffers muxed in as AAC at save time (see `finalizeSave`). See
+/// DECISIONS.md "Audio".
 ///
 /// There is only ever one active session app-wide, hence the singleton,
 /// mirroring the Android CameraEncoderController.
@@ -31,12 +31,16 @@ final class CameraEncoderController: NSObject {
     private let sessionQueue = DispatchQueue(label: "com.peguei.session")
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let videoDataOutputQueue = DispatchQueue(label: "com.peguei.videodata")
+    private let audioDataOutput = AVCaptureAudioDataOutput()
+    private let audioDataOutputQueue = DispatchQueue(label: "com.peguei.audiodata")
 
     private var compressionSession: VTCompressionSession?
     private var formatDescription: CMFormatDescription?
+    private var audioFormatDescription: CMFormatDescription?
 
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var ringBuffer: FrameRingBuffer?
+    private var audioRingBuffer: AudioSampleRingBuffer?
     private var pendingConfig: BufferConfig?
     private var isRunning = false
 
@@ -59,6 +63,8 @@ final class CameraEncoderController: NSObject {
     private struct PendingSave {
         let headFrames: [EncodedFrame]
         var tailFrames: [EncodedFrame] = []
+        let audioHeadFrames: [AudioSampleFrame]
+        var audioTailFrames: [AudioSampleFrame] = []
         let outputURL: URL
     }
 
@@ -79,6 +85,7 @@ final class CameraEncoderController: NSObject {
         pendingConfig = config
         self.delegate = delegate
         ringBuffer = FrameRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
+        audioRingBuffer = AudioSampleRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
         stateLock.unlock()
 
         // The actual "should I start" decision is deferred onto sessionQueue
@@ -148,11 +155,47 @@ final class CameraEncoderController: NSObject {
             guard let self else { return }
             guard let config = self.pendingConfig else { return }
 
+            // ringBuffer/audioRingBuffer are only ever *created* in
+            // configureAndArm(), which runs exactly once (CameraScreen's
+            // initial mount). Every restart after that point (navigating
+            // away detaches the preview -> stopInternal() nils both
+            // buffers; navigating back reattaches -> this method) brings
+            // the capture session back correctly but would leave the
+            // buffers permanently nil forever after if nothing here
+            // recreated them. Fresh buffers here (not reused stale ones)
+            // also matters because they'd otherwise hold frames encoded
+            // under the *previous* session's formatDescription/compression
+            // session, which finalizeSave assumes is uniform across every
+            // frame.
+            self.stateLock.lock()
+            if self.ringBuffer == nil {
+                self.ringBuffer = FrameRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
+            }
+            if self.audioRingBuffer == nil {
+                self.audioRingBuffer = AudioSampleRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
+            }
+            self.stateLock.unlock()
+
             let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
             guard authStatus == .authorized else {
                 self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.cameraPermission, message: "Permissão de câmera não concedida.")
                 return
             }
+
+            let audioAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            guard audioAuthStatus == .authorized else {
+                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.microphonePermission, message: "Permissão de microfone não concedida.")
+                return
+            }
+
+            // AVCaptureSession configures the shared audio session's category
+            // internally once an audio input is attached, but explicitly
+            // setting it first is more reliable across devices/OS versions.
+            // Non-fatal if it fails -- the session can often still capture
+            // audio; if not, the audio delegate callback simply never fires
+            // and the clip degrades gracefully to video-only (see finalizeSave).
+            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth])
+            try? AVAudioSession.sharedInstance().setActive(true)
 
             guard let device = Self.pickBackCameraDevice() else {
                 self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Nenhuma câmera traseira disponível.")
@@ -185,6 +228,20 @@ final class CameraEncoderController: NSObject {
                 }
                 self.session.addOutput(self.videoDataOutput)
                 self.session.sessionPreset = .high
+
+                // Audio is best-effort: if no mic is available or it can't be
+                // attached, the video-only path above has already succeeded,
+                // so we simply skip adding an audio track rather than failing
+                // the whole buffering session over it.
+                if let audioDevice = AVCaptureDevice.default(for: .audio) {
+                    if let audioInput = try? AVCaptureDeviceInput(device: audioDevice), self.session.canAddInput(audioInput) {
+                        self.session.addInput(audioInput)
+                        self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataOutputQueue)
+                        if self.session.canAddOutput(self.audioDataOutput) {
+                            self.session.addOutput(self.audioDataOutput)
+                        }
+                    }
+                }
 
                 self.session.commitConfiguration()
             } catch {
@@ -404,6 +461,38 @@ final class CameraEncoderController: NSObject {
         stateLock.unlock()
     }
 
+    private func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        if audioFormatDescription == nil {
+            audioFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+        }
+
+        // Copy the PCM bytes out and let sampleBuffer (and its pooled
+        // backing buffer) be released the moment this function returns --
+        // see AudioSampleFrame's doc comment for why retaining the original
+        // buffer instead silently starves AVCaptureAudioDataOutput's pool.
+        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+        var length = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer) == noErr,
+              let dataPointer else { return }
+
+        let data = Data(bytes: dataPointer, count: length)
+        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let ptsUs = Int64(pts.seconds * 1_000_000)
+        let frame = AudioSampleFrame(data: data, presentationTimeUs: ptsUs, numSamples: numSamples)
+        audioRingBuffer?.add(frame)
+        appendAudioToPendingSaveIfNeeded(frame)
+    }
+
+    private func appendAudioToPendingSaveIfNeeded(_ frame: AudioSampleFrame) {
+        stateLock.lock()
+        if pendingSave != nil {
+            pendingSave!.audioTailFrames.append(frame)
+        }
+        stateLock.unlock()
+    }
+
     /// Starts a manual recording: snapshots the current pre-roll buffer
     /// (governed by the configured `bufferSeconds`) as the clip's head, then
     /// keeps accumulating every new frame as the tail until the user taps
@@ -439,10 +528,11 @@ final class CameraEncoderController: NSObject {
         }
 
         let head = buffer.snapshotFromOldestKeyframe()
+        let audioHead = audioRingBuffer?.snapshot() ?? []
         let outputURL = moviesDir.appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970 * 1000)).mp4")
 
         stateLock.lock()
-        pendingSave = PendingSave(headFrames: head, outputURL: outputURL)
+        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL)
         stateLock.unlock()
         onStarted()
     }
@@ -465,74 +555,164 @@ final class CameraEncoderController: NSObject {
                 onFailed(CircularBufferErrorCode.saveFailed, "Formato do encoder ainda não disponível.")
                 return
             }
+            let audioFormatDescription = self.audioFormatDescription
 
-            let allFrames = save.headFrames + save.tailFrames
-            guard let startUs = allFrames.first?.presentationTimeUs else {
+            let videoFrames = save.headFrames + save.tailFrames
+            guard let startUs = videoFrames.first?.presentationTimeUs else {
                 onFailed(CircularBufferErrorCode.saveFailed, "Buffer vazio, nada para salvar.")
                 return
             }
+            // Audio capture starts independently of video (same
+            // AVCaptureSession, but no guarantee which output's first
+            // sample lands first) -- frames older than the video's own
+            // start would rebase to a negative CMTime, which
+            // CMSampleBufferCreateReady rejects. Dropping them is a few
+            // milliseconds of lost pre-roll audio at most.
+            let audioFrames = (save.audioHeadFrames + save.audioTailFrames).filter { $0.presentationTimeUs >= startUs }
 
             do {
                 try? FileManager.default.removeItem(at: save.outputURL)
                 let writer = try AVAssetWriter(outputURL: save.outputURL, fileType: .mp4)
-                let input = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: formatDescription)
-                input.expectsMediaDataInRealTime = false
-                guard writer.canAdd(input) else {
+                let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: formatDescription)
+                videoInput.expectsMediaDataInRealTime = false
+                // Sample buffers arrive in the back camera's native sensor
+                // orientation (landscape) since the app never sets a
+                // videoOrientation on the capture connection -- tag the
+                // track as portrait here so players display it upright
+                // instead of rotated 90°, matching the portrait-locked UI.
+                videoInput.transform = CGAffineTransform(rotationAngle: .pi / 2)
+                guard writer.canAdd(videoInput) else {
                     onFailed(CircularBufferErrorCode.saveFailed, "Não foi possível configurar o gravador de vídeo.")
                     return
                 }
-                writer.add(input)
+                writer.add(videoInput)
+
+                // Audio is added only if a track actually got captured this
+                // session -- if the mic never produced a sample (e.g. a
+                // transient AVAudioSession/device failure), the clip still
+                // saves successfully as video-only rather than failing the
+                // whole save. outputSettings: nil -- like the video input,
+                // this is pure passthrough of already-captured samples
+                // (raw LPCM), not live transcoding: AVAssetWriterInput's
+                // built-in PCM->AAC transcode-on-append silently stopped
+                // encoding partway through a batch append of pre-recorded
+                // samples in an earlier version of this code.
+                var audioInput: AVAssetWriterInput?
+                if let audioFormatDescription, !audioFrames.isEmpty {
+                    let candidateAudioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: audioFormatDescription)
+                    candidateAudioInput.expectsMediaDataInRealTime = false
+                    if writer.canAdd(candidateAudioInput) {
+                        writer.add(candidateAudioInput)
+                        audioInput = candidateAudioInput
+                    }
+                }
+
                 writer.startWriting()
                 writer.startSession(atSourceTime: .zero)
 
-                // AVAssetWriterInput.append(_:) raises an uncaught
-                // NSException (not a catchable Swift error) if called while
-                // the writer isn't in .writing status -- e.g. if it already
-                // failed. Checking writer.status before every append, and
-                // capping the isReadyForMoreMediaData poll instead of
-                // spinning forever, turns what would otherwise be a hard
-                // crash into a normal onFailed() call.
-                var writeFailed = false
-                for frame in allFrames {
-                    guard writer.status == .writing else {
-                        writeFailed = true
-                        break
-                    }
-                    guard let sampleBuffer = Self.makeSampleBuffer(frame: frame, formatDescription: formatDescription, startUs: startUs, fps: 30) else {
-                        continue
-                    }
-                    var waitedMs = 0
-                    while !input.isReadyForMoreMediaData {
-                        if writer.status != .writing || waitedMs >= 2000 {
-                            writeFailed = true
-                            break
+                // Two AVAssetWriterInputs must each be pumped from their
+                // own serial queue via requestMediaDataWhenReady, not fed
+                // from a single thread manually polling
+                // isReadyForMoreMediaData in turn: confirmed on-device that
+                // the manual-polling approach made the video input's
+                // isReadyForMoreMediaData get stuck (never becoming ready
+                // again, writer.status staying .writing, writer.error nil)
+                // a fixed ~150 items in regardless of total frame count or
+                // how long the poll was allowed to wait (tested up to
+                // 15s/frame) -- a hard block, not disk-speed backpressure,
+                // consistent with AVAssetWriter expecting each track to be
+                // serviced independently and concurrently the way
+                // requestMediaDataWhenReady is documented to require for
+                // multi-track writes.
+                let group = DispatchGroup()
+                var videoFailed = false
+                var audioFailed = false
+
+                group.enter()
+                var videoIndex = 0
+                videoInput.requestMediaDataWhenReady(on: DispatchQueue(label: "com.peguei.mux.video")) {
+                    while videoInput.isReadyForMoreMediaData {
+                        guard writer.status == .writing else {
+                            videoFailed = true
+                            videoInput.markAsFinished()
+                            group.leave()
+                            return
                         }
-                        Thread.sleep(forTimeInterval: 0.002)
-                        waitedMs += 2
+                        guard videoIndex < videoFrames.count else {
+                            videoInput.markAsFinished()
+                            group.leave()
+                            return
+                        }
+                        let frame = videoFrames[videoIndex]
+                        videoIndex += 1
+                        guard let sampleBuffer = Self.makeSampleBuffer(frame: frame, formatDescription: formatDescription, startUs: startUs, fps: 30) else {
+                            continue
+                        }
+                        if !videoInput.append(sampleBuffer) {
+                            videoFailed = true
+                            videoInput.markAsFinished()
+                            group.leave()
+                            return
+                        }
                     }
-                    if writeFailed { break }
-                    guard writer.status == .writing else {
-                        writeFailed = true
-                        break
-                    }
-                    input.append(sampleBuffer)
                 }
 
-                if writeFailed {
-                    input.markAsFinished()
+                if let audioInput, let audioFormatDescription {
+                    group.enter()
+                    var audioIndex = 0
+                    audioInput.requestMediaDataWhenReady(on: DispatchQueue(label: "com.peguei.mux.audio")) {
+                        while audioInput.isReadyForMoreMediaData {
+                            guard writer.status == .writing else {
+                                audioFailed = true
+                                audioInput.markAsFinished()
+                                group.leave()
+                                return
+                            }
+                            guard audioIndex < audioFrames.count else {
+                                audioInput.markAsFinished()
+                                group.leave()
+                                return
+                            }
+                            let frame = audioFrames[audioIndex]
+                            audioIndex += 1
+                            guard let sampleBuffer = Self.makeAudioSampleBuffer(frame: frame, formatDescription: audioFormatDescription, startUs: startUs) else {
+                                continue
+                            }
+                            if !audioInput.append(sampleBuffer) {
+                                audioFailed = true
+                                audioInput.markAsFinished()
+                                group.leave()
+                                return
+                            }
+                        }
+                    }
+                }
+
+                // Bounding this wait (rather than group.wait() with no
+                // timeout) means a track that somehow never finishes still
+                // surfaces as onFailed() instead of hanging the save --
+                // and by extension the JS promise -- forever.
+                let groupFinished = group.wait(timeout: .now() + 30) == .success
+
+                guard groupFinished, !videoFailed, !audioFailed, writer.status == .writing else {
                     onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "O gravador de vídeo parou de responder.")
                     return
                 }
 
-                input.markAsFinished()
-                let durationSeconds = Double(allFrames.last!.presentationTimeUs - startUs) / 1_000_000.0
+                let durationSeconds = Double(videoFrames.last!.presentationTimeUs - startUs) / 1_000_000.0
+
+                // finishWriting's completion handler is not guaranteed to
+                // fire if the writer stalls internally -- bounding the
+                // wait means a stuck save surfaces as a normal onFailed()
+                // instead of hanging indefinitely (the JS promise never
+                // settling, which reads as "the buffer stopped working").
                 let semaphore = DispatchSemaphore(value: 0)
                 writer.finishWriting {
                     semaphore.signal()
                 }
-                semaphore.wait()
+                let finished = semaphore.wait(timeout: .now() + 10) == .success
 
-                if writer.status == .completed {
+                if finished, writer.status == .completed {
                     onSaved(save.outputURL.path, durationSeconds)
                 } else {
                     onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "Falha desconhecida ao finalizar o vídeo.")
@@ -541,6 +721,61 @@ final class CameraEncoderController: NSObject {
                 onFailed(CircularBufferErrorCode.saveFailed, "Falha ao gerar o arquivo de vídeo: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Rebuilds a playable PCM `CMSampleBuffer` from bytes copied out at
+    /// capture time (see `AudioSampleFrame`), rebased onto the same
+    /// zero-based timeline `makeSampleBuffer` uses for video (both derive
+    /// from the same `AVCaptureSession` clock, so subtracting the clip's
+    /// shared `startUs` keeps them in sync). `numSamples` with a single
+    /// timing/size entry is exactly how CoreMedia expects a constant-format
+    /// PCM buffer's samples to be described -- the same shape
+    /// `AVCaptureAudioDataOutput` used when it originally produced this data.
+    private static func makeAudioSampleBuffer(frame: AudioSampleFrame, formatDescription: CMFormatDescription, startUs: Int64) -> CMSampleBuffer? {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee, asbd.mBytesPerFrame > 0 else {
+            return nil
+        }
+
+        var blockBuffer: CMBlockBuffer?
+        let blockStatus = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: frame.data.count,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: frame.data.count,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+        guard blockStatus == kCMBlockBufferNoErr, let bb = blockBuffer else { return nil }
+
+        let replaceStatus = frame.data.withUnsafeBytes { raw -> OSStatus in
+            guard let base = raw.baseAddress else { return kCMBlockBufferBadCustomBlockSourceErr }
+            return CMBlockBufferReplaceDataBytes(with: base, blockBuffer: bb, offsetIntoDestination: 0, dataLength: frame.data.count)
+        }
+        guard replaceStatus == kCMBlockBufferNoErr else { return nil }
+
+        var timingInfo = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: CMTimeScale(asbd.mSampleRate)),
+            presentationTimeStamp: CMTime(value: frame.presentationTimeUs - startUs, timescale: 1_000_000),
+            decodeTimeStamp: .invalid
+        )
+        var sampleSize = Int(asbd.mBytesPerFrame)
+        var sampleBuffer: CMSampleBuffer?
+        let sampleStatus = CMSampleBufferCreateReady(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: bb,
+            formatDescription: formatDescription,
+            sampleCount: frame.numSamples,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timingInfo,
+            sampleSizeEntryCount: 1,
+            sampleSizeArray: &sampleSize,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard sampleStatus == noErr, let sb = sampleBuffer else { return nil }
+        return sb
     }
 
     private static func makeSampleBuffer(frame: EncodedFrame, formatDescription: CMFormatDescription, startUs: Int64, fps: Int) -> CMSampleBuffer? {
@@ -621,25 +856,49 @@ final class CameraEncoderController: NSObject {
             }
             self.compressionSession = nil
             self.formatDescription = nil
-            self.ringBuffer?.clear()
-            self.ringBuffer = nil
+            self.audioFormatDescription = nil
             self.deviceLock.lock()
             self.activeDevice = nil
             self.deviceLock.unlock()
 
+            // `ringBuffer`/`audioRingBuffer` must go to nil in the *same*
+            // stateLock critical section as `isRunning = false` --
+            // startManualRecording reads both under stateLock expecting
+            // them to be consistent. Clearing the buffers outside the lock
+            // (as this used to do) left a real window where a concurrent
+            // startManualRecording call could observe isRunning == true
+            // with ringBuffer == nil (confirmed on-device: exactly that
+            // combination surfaced "O buffer não está ativo" right after
+            // navigating back from Gallery, which detaches/reattaches the
+            // preview and races this teardown).
             self.stateLock.lock()
             self.isRunning = false
             if clearPendingConfig {
                 self.pendingConfig = nil
             }
             self.pendingSave = nil
+            let oldRingBuffer = self.ringBuffer
+            let oldAudioRingBuffer = self.audioRingBuffer
+            self.ringBuffer = nil
+            self.audioRingBuffer = nil
             self.stateLock.unlock()
+
+            oldRingBuffer?.clear()
+            oldAudioRingBuffer?.clear()
         }
     }
 }
 
-extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate {
+// `AVCaptureVideoDataOutputSampleBufferDelegate` and
+// `AVCaptureAudioDataOutputSampleBufferDelegate` declare the exact same
+// `captureOutput(_:didOutput:from:)` method, so one conformance/
+// implementation serves both outputs -- distinguish by `output` identity.
+extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output === audioDataOutput {
+            handleAudioSampleBuffer(sampleBuffer)
+            return
+        }
         guard let compressionSession, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         VTCompressionSessionEncodeFrame(

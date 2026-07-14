@@ -17,6 +17,7 @@ require Pod::Executable.execute_command('node', ['-p',
 
 setup_permissions([
   'Camera',
+  'Microphone',
   'PhotoLibraryAddOnly',
 ])
 

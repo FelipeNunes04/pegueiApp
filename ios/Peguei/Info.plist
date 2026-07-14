@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>O Peguei usa a câmera para gravar continuamente o buffer de vídeo e exibir o preview ao vivo.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>O Peguei usa o microfone para gravar o áudio dos clipes.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>O Peguei salva os clipes gravados na sua galeria de fotos.</string>
 	<key>RCTNewArchEnabled</key>

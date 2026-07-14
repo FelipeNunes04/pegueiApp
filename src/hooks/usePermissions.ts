@@ -19,6 +19,8 @@ function resolvePermission(key: PermissionKey): Permission | null {
       case 'storage':
         // Android 13+ (API 33) scoped media permissions; below that, WRITE_EXTERNAL_STORAGE.
         return Platform.Version >= 33 ? PERMISSIONS.ANDROID.READ_MEDIA_VIDEO : PERMISSIONS.ANDROID.WRITE_EXTERNAL_STORAGE;
+      case 'microphone':
+        return PERMISSIONS.ANDROID.RECORD_AUDIO;
     }
   }
   if (Platform.OS === 'ios') {
@@ -27,6 +29,8 @@ function resolvePermission(key: PermissionKey): Permission | null {
         return PERMISSIONS.IOS.CAMERA;
       case 'storage':
         return PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY;
+      case 'microphone':
+        return PERMISSIONS.IOS.MICROPHONE;
     }
   }
   return null;
@@ -47,13 +51,19 @@ function toStatus(result: string): PermissionStatus {
   }
 }
 
-const KEYS: PermissionKey[] = ['camera', 'storage'];
+const KEYS: PermissionKey[] = ['camera', 'storage', 'microphone'];
 
 export function usePermissions() {
   const [statuses, setStatuses] = useState<PermissionMap>({
     camera: 'unknown',
     storage: 'unknown',
+    microphone: 'unknown',
   });
+  // False until the first refresh() resolves -- lets a caller (App.tsx)
+  // avoid picking a navigator initialRouteName before it actually knows
+  // whether permissions are already granted, which otherwise flashes the
+  // Permissions screen for a frame even when there's nothing to ask for.
+  const [checked, setChecked] = useState(false);
 
   const refresh = useCallback(async () => {
     const next: Partial<PermissionMap> = {};
@@ -67,6 +77,7 @@ export function usePermissions() {
       next[key] = toStatus(result);
     }
     setStatuses(prev => ({ ...prev, ...next }));
+    setChecked(true);
   }, []);
 
   useEffect(() => {
@@ -87,5 +98,5 @@ export function usePermissions() {
 
   const allGranted = KEYS.every(key => statuses[key] === 'granted');
 
-  return { statuses, requestPermission, refresh, allGranted };
+  return { statuses, requestPermission, refresh, allGranted, checked };
 }

@@ -22,7 +22,7 @@ export interface AppSettings {
   videoQuality: VideoQuality;
 }
 
-export type PermissionKey = 'camera' | 'storage';
+export type PermissionKey = 'camera' | 'storage' | 'microphone';
 
 export type PermissionStatus = 'unknown' | 'granted' | 'denied' | 'blocked';
 

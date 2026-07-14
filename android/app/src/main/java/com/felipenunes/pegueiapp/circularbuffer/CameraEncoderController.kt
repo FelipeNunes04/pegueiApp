@@ -7,10 +7,13 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -41,11 +44,10 @@ interface StartRecordingCallback {
 
 /**
  * Owns the Camera2 capture session, the MediaCodec H.264 encoder and the
- * [FrameRingBuffer] of encoded frames. Video-only (no audio track): the
- * microphone is a single-consumer resource already claimed by the wake-word
- * voice processor while listening, so mixing in an AAC track here would
- * require arbitrating access to the mic between two native consumers. See
- * DECISIONS.md.
+ * [FrameRingBuffer] of encoded video frames, plus a continuously-running
+ * mic capture + AAC encoder pair feeding a second [FrameRingBuffer] of
+ * encoded audio frames, muxed in alongside video at save time (see
+ * [finalizeSave]). See DECISIONS.md "Audio".
  *
  * There is only ever one active session app-wide, hence the singleton.
  */
@@ -54,6 +56,12 @@ object CameraEncoderController {
     private const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
     private const val I_FRAME_INTERVAL_SECONDS = 1
     private const val OUTPUT_TIMEOUT_US = 10_000L
+
+    private const val AUDIO_MIME_TYPE = MediaFormat.MIMETYPE_AUDIO_AAC
+    private const val AUDIO_SAMPLE_RATE = 44_100
+    private const val AUDIO_CHANNEL_COUNT = 1
+    private const val AUDIO_BIT_RATE = 96_000
+    private const val AUDIO_OUTPUT_TIMEOUT_US = 10_000L
 
     private var appContext: Context? = null
     private var pendingConfig: BufferConfig? = null
@@ -92,6 +100,19 @@ object CameraEncoderController {
 
     private var ringBuffer: FrameRingBuffer? = null
 
+    // Continuously-running mic capture + AAC encoder, parallel to the video
+    // encoder/drain thread above. isAudioRunning is separate from isRunning:
+    // audio starts synchronously right after the video encoder is
+    // configured, well before isRunning flips true in createCaptureSession's
+    // async onConfigured callback, so reusing isRunning as the audio loop's
+    // condition would race it into never starting.
+    private var audioRecord: AudioRecord? = null
+    private var audioEncoder: MediaCodec? = null
+    private var audioEncoderOutputFormat: MediaFormat? = null
+    private var audioThread: Thread? = null
+    private var audioRingBuffer: FrameRingBuffer? = null
+    private val isAudioRunning = AtomicBoolean(false)
+
     @Volatile
     private var pendingSave: PendingSave? = null
 
@@ -105,6 +126,8 @@ object CameraEncoderController {
     private class PendingSave(
         val headFrames: List<EncodedFrame>,
         val tailFrames: MutableList<EncodedFrame>,
+        val audioHeadFrames: List<EncodedFrame>,
+        val audioTailFrames: MutableList<EncodedFrame>,
         val outputFile: File,
     )
 
@@ -117,6 +140,7 @@ object CameraEncoderController {
         pendingConfig = config
         callback = cb
         ringBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
+        audioRingBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
         if (previewSurface != null && !isRunning.get()) {
             openCameraAndStart()
         }
@@ -145,6 +169,26 @@ object CameraEncoderController {
         val config = pendingConfig ?: return
         val preview = previewSurface ?: return
         if (isOpening.get() || isRunning.get()) return
+
+        // ringBuffer/audioRingBuffer are only ever *created* in
+        // configureAndArm(), which runs exactly once (CameraScreen's
+        // initial mount). Every restart after that point (navigating away
+        // detaches the preview -> stopInternal() nulls both buffers;
+        // navigating back reattaches -> this method) brings the capture
+        // session back correctly but would leave the buffers permanently
+        // null forever after, since nothing here recreated them -- same
+        // bug confirmed on the iOS side via on-device diagnostics (session
+        // restart reported success while ringBuffer stayed nil). Fresh
+        // buffers here (not reused stale ones) also matters because
+        // they'd otherwise hold frames encoded under the *previous*
+        // session's encoderOutputFormat, which finalizeSave assumes is
+        // uniform across every frame.
+        if (ringBuffer == null) {
+            ringBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
+        }
+        if (audioRingBuffer == null) {
+            audioRingBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
+        }
 
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraId = pickBackCameraId(manager)
@@ -184,6 +228,22 @@ object CameraEncoderController {
             releaseEncoder()
             callback?.onError(CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Falha ao iniciar o encoder: ${t.message}")
             return
+        }
+
+        try {
+            startAudioCapture()
+        } catch (e: SecurityException) {
+            releaseEncoder()
+            releaseAudioCapture()
+            callback?.onError(CircularBufferErrorCodes.MICROPHONE_PERMISSION, "Permissão de microfone não concedida.")
+            return
+        } catch (t: Throwable) {
+            // Non-fatal: the video pipeline above already succeeded, so a mic/
+            // audio-encoder problem degrades to a video-only clip (mirrors
+            // the iOS side's "audio is best-effort" handling) instead of
+            // failing the whole buffering session.
+            Log.e(TAG, "Failed to start audio capture, continuing video-only", t)
+            releaseAudioCapture()
         }
 
         isOpening.set(true)
@@ -311,6 +371,134 @@ object CameraEncoderController {
     }
 
     /**
+     * Starts the mic capture + AAC encoder pair. Unlike the video encoder
+     * (which is fed by the Camera2 surface and drained on its own thread),
+     * audio has no Surface source: a single thread both reads PCM off
+     * [AudioRecord] and drives the encoder's input/output buffer queues
+     * directly, since buffer-mode `MediaCodec` encoding is a plain
+     * synchronous request/response with no separate producer.
+     *
+     * Throws [SecurityException] if RECORD_AUDIO isn't granted (caller
+     * treats that as fatal, mirroring the existing camera-permission
+     * handling in [openCameraAndStart]); any other failure is left for the
+     * caller to treat as non-fatal (video-only degrade).
+     */
+    @Suppress("MissingPermission")
+    private fun startAudioCapture() {
+        val minBufferSize = AudioRecord.getMinBufferSize(AUDIO_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        check(minBufferSize > 0) { "AudioRecord.getMinBufferSize falhou" }
+
+        val record = AudioRecord(
+            MediaRecorder.AudioSource.CAMCORDER,
+            AUDIO_SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            minBufferSize * 4,
+        )
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            error("AudioRecord não inicializou")
+        }
+
+        val format = MediaFormat.createAudioFormat(AUDIO_MIME_TYPE, AUDIO_SAMPLE_RATE, AUDIO_CHANNEL_COUNT).apply {
+            setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BIT_RATE)
+        }
+        val encoder = MediaCodec.createEncoderByType(AUDIO_MIME_TYPE)
+        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        encoder.start()
+
+        audioRecord = record
+        audioEncoder = encoder
+        record.startRecording()
+        isAudioRunning.set(true)
+
+        audioThread = Thread({ runAudioEncodeLoop(record, encoder) }, "CircularBufferAudio").apply { start() }
+    }
+
+    /**
+     * PCM chunks have no capture-hardware timestamp of their own (unlike the
+     * video encoder's Camera2 surface buffers), so each chunk's
+     * presentation time is derived from a running sample count seeded at
+     * `System.nanoTime()` when recording starts -- the same basis Camera2's
+     * own surface-buffer timestamps use on most devices. This is a relative,
+     * not hardware-clock-exact, alignment: acceptable drift (a few ms over a
+     * sub-60s clip) for this app, not achievable to tighten further without
+     * much more machinery. See DECISIONS.md "Audio".
+     */
+    private fun runAudioEncodeLoop(record: AudioRecord, encoder: MediaCodec) {
+        val pcmBuffer = ByteArray(4096)
+        val audioStartUs = System.nanoTime() / 1_000L
+        var totalSamplesRead = 0L
+        val bufferInfo = MediaCodec.BufferInfo()
+
+        while (isAudioRunning.get()) {
+            val bytesRead = try {
+                record.read(pcmBuffer, 0, pcmBuffer.size)
+            } catch (t: Throwable) {
+                break
+            }
+            if (bytesRead <= 0) continue
+
+            val presentationTimeUs = audioStartUs + (totalSamplesRead * 1_000_000L / AUDIO_SAMPLE_RATE)
+            totalSamplesRead += bytesRead / 2 // 16-bit mono: 2 bytes/sample
+
+            val inputIndex = try {
+                encoder.dequeueInputBuffer(AUDIO_OUTPUT_TIMEOUT_US)
+            } catch (t: Throwable) {
+                break
+            }
+            if (inputIndex >= 0) {
+                val inputBuffer = encoder.getInputBuffer(inputIndex)
+                inputBuffer?.clear()
+                inputBuffer?.put(pcmBuffer, 0, bytesRead)
+                encoder.queueInputBuffer(inputIndex, 0, bytesRead, presentationTimeUs, 0)
+            }
+
+            drainAudioEncoder(encoder, bufferInfo)
+        }
+
+        // Flush whatever's left once buffering stops.
+        drainAudioEncoder(encoder, bufferInfo)
+    }
+
+    private fun drainAudioEncoder(encoder: MediaCodec, bufferInfo: MediaCodec.BufferInfo) {
+        while (true) {
+            val outIndex = try {
+                encoder.dequeueOutputBuffer(bufferInfo, 0)
+            } catch (t: Throwable) {
+                return
+            }
+            when {
+                outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    audioEncoderOutputFormat = encoder.outputFormat
+                }
+                outIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> return
+                outIndex >= 0 -> {
+                    val outputBuffer = encoder.getOutputBuffer(outIndex)
+                    if (outputBuffer != null && bufferInfo.size > 0 &&
+                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                    ) {
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        val data = ByteArray(bufferInfo.size)
+                        outputBuffer.get(data)
+                        val frame = EncodedFrame(data, bufferInfo.presentationTimeUs, true)
+                        audioRingBuffer?.add(frame)
+                        onAudioFrameEncoded(frame)
+                    }
+                    encoder.releaseOutputBuffer(outIndex, false)
+                }
+                else -> return
+            }
+        }
+    }
+
+    private fun onAudioFrameEncoded(frame: EncodedFrame) {
+        pendingSave?.audioTailFrames?.add(frame)
+    }
+
+    /**
      * Starts a manual recording: snapshots the current pre-roll buffer
      * (governed by the configured `bufferSeconds`) as the clip's head, then
      * keeps accumulating every new frame as the tail until the user taps
@@ -337,8 +525,9 @@ object CameraEncoderController {
         }
 
         val head = buffer.snapshotFromOldestKeyframe()
+        val audioHead = audioRingBuffer?.snapshot() ?: emptyList()
         val outputFile = File(moviesDir, "clip_${System.currentTimeMillis()}.mp4")
-        pendingSave = PendingSave(head, mutableListOf(), outputFile)
+        pendingSave = PendingSave(head, mutableListOf(), audioHead, mutableListOf(), outputFile)
         callback.onStarted()
     }
 
@@ -359,13 +548,49 @@ object CameraEncoderController {
                 val format = encoderOutputFormat
                     ?: throw EncoderInitException("Formato do encoder ainda não disponível.")
                 val muxer = MediaMuxer(save.outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                val trackIndex = muxer.addTrack(format)
+                // The encoder input surface is fed directly from the Camera2
+                // session in the back camera's native sensor orientation
+                // (landscape); the app is portrait-only, so stamp a fixed
+                // 90° rotation hint or players show the clip on its side.
+                muxer.setOrientationHint(90)
+                val videoTrackIndex = muxer.addTrack(format)
+
+                // Audio is added only if a track actually got captured this
+                // session -- if the mic never produced output (e.g. a
+                // transient AudioRecord/encoder failure), the clip still
+                // saves successfully as video-only rather than failing the
+                // whole save.
+                val allAudioFrames = save.audioHeadFrames + save.audioTailFrames
+                val audioFormat = audioEncoderOutputFormat
+                val audioTrackIndex = if (audioFormat != null && allAudioFrames.isNotEmpty()) {
+                    muxer.addTrack(audioFormat)
+                } else {
+                    -1
+                }
+
                 muxer.start()
 
-                val allFrames = save.headFrames + save.tailFrames
-                val startUs = allFrames.firstOrNull()?.presentationTimeUs ?: 0L
+                val allVideoFrames = save.headFrames + save.tailFrames
+                val startUs = allVideoFrames.firstOrNull()?.presentationTimeUs ?: 0L
+
+                data class MuxItem(val frame: EncodedFrame, val trackIndex: Int)
+                // Audio capture starts independently of video (separate
+                // AudioRecord + System.nanoTime()-seeded clock), so an
+                // audio frame can predate the video's own start. Rebasing
+                // those to a negative presentationTimeUs against startUs
+                // is rejected by MediaMuxer -- drop them, a few
+                // milliseconds of lost pre-roll audio at most.
+                val items = allVideoFrames.map { MuxItem(it, videoTrackIndex) } +
+                    if (audioTrackIndex >= 0) {
+                        allAudioFrames.filter { it.presentationTimeUs >= startUs }.map { MuxItem(it, audioTrackIndex) }
+                    } else {
+                        emptyList()
+                    }
+                val sortedItems = items.sortedBy { it.frame.presentationTimeUs }
+
                 val info = MediaCodec.BufferInfo()
-                for (frame in allFrames) {
+                for (item in sortedItems) {
+                    val frame = item.frame
                     val buffer = ByteBuffer.wrap(frame.data)
                     info.set(
                         0,
@@ -373,14 +598,14 @@ object CameraEncoderController {
                         frame.presentationTimeUs - startUs,
                         if (frame.isKeyFrame) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0,
                     )
-                    muxer.writeSampleData(trackIndex, buffer, info)
+                    muxer.writeSampleData(item.trackIndex, buffer, info)
                 }
 
                 muxer.stop()
                 muxer.release()
 
-                val durationSeconds = if (allFrames.size >= 2) {
-                    (allFrames.last().presentationTimeUs - startUs) / 1_000_000.0
+                val durationSeconds = if (allVideoFrames.size >= 2) {
+                    (allVideoFrames.last().presentationTimeUs - startUs) / 1_000_000.0
                 } else {
                     0.0
                 }
@@ -456,6 +681,7 @@ object CameraEncoderController {
 
     private fun stopInternal() {
         isRunning.set(false)
+        isAudioRunning.set(false)
         pendingSave = null
         requestBuilder = null
         zoomRatioRange = null
@@ -480,6 +706,11 @@ object CameraEncoderController {
 
         releaseEncoder()
 
+        audioThread?.join(500)
+        audioThread = null
+
+        releaseAudioCapture()
+
         cameraThread?.quitSafely()
         cameraThread = null
         cameraHandler = null
@@ -487,6 +718,10 @@ object CameraEncoderController {
         ringBuffer?.clear()
         ringBuffer = null
         encoderOutputFormat = null
+
+        audioRingBuffer?.clear()
+        audioRingBuffer = null
+        audioEncoderOutputFormat = null
     }
 
     private fun releaseEncoder() {
@@ -501,6 +736,27 @@ object CameraEncoderController {
         encoder = null
         encoderInputSurface?.release()
         encoderInputSurface = null
+    }
+
+    private fun releaseAudioCapture() {
+        try {
+            audioRecord?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            audioRecord?.release()
+        } catch (_: Throwable) {
+        }
+        audioRecord = null
+        try {
+            audioEncoder?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            audioEncoder?.release()
+        } catch (_: Throwable) {
+        }
+        audioEncoder = null
     }
 
     private fun pickBackCameraId(manager: CameraManager): String? {
