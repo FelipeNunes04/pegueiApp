@@ -15,8 +15,10 @@ export function GalleryEmptyState({ onBackToCamera }: Props) {
       <View style={styles.iconWrapper}>
         <GalleryPlaceholderIcon size={48} color={colors.primaryLight} />
       </View>
-      <Text style={styles.title}>Nenhum vídeo salvo ainda</Text>
-      <Text style={styles.subtitle}>Seus vídeos salvos aparecem aqui.</Text>
+      <Text style={styles.title}>Nenhum clipe salvo ainda</Text>
+      <Text style={styles.subtitle}>
+        Toque no botão da câmera para começar a gravar. O clipe salvo já vem com os segundos anteriores ao toque.
+      </Text>
       <Pressable
         accessibilityRole="button"
         testID="gallery-empty-cta"
