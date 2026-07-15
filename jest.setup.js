@@ -5,6 +5,21 @@ jest.mock('react-native-share', () => ({
   shareSingle: jest.fn().mockResolvedValue({}),
 }));
 
+jest.mock('@react-native-clipboard/clipboard', () => ({
+  setString: jest.fn(),
+  getString: jest.fn().mockResolvedValue(''),
+}));
+
+jest.mock('@react-native-firebase/analytics', () => {
+  const mockAnalytics = {
+    logEvent: jest.fn().mockResolvedValue(undefined),
+    logScreenView: jest.fn().mockResolvedValue(undefined),
+  };
+  return { __esModule: true, default: () => mockAnalytics };
+});
+
+jest.mock('@react-native-firebase/app', () => ({}));
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest'),
 );

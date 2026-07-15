@@ -76,3 +76,9 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Firebase config -- tied to a specific Firebase project (API key, project
+# ID, app IDs); each dev/CI environment should supply their own from the
+# Firebase Console rather than sharing one committed to a public repo.
+android/app/google-services.json
+ios/**/GoogleService-Info.plist

@@ -8,6 +8,7 @@ import { SelectionToolbar } from '../components/SelectionToolbar';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { buildGalleryListItems, type GalleryListItem } from '../utils/dateGroups';
 import { deleteClip, listSavedClips } from '../utils/files';
+import { logClipDeleted, logClipShared } from '../utils/analytics';
 import { useRecordingStore } from '../store/recordingStore';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
@@ -102,11 +103,12 @@ export function GalleryScreen({ navigation }: Props) {
   const selectedClips = useMemo(() => clips.filter(c => selectedIds.has(c.id)), [clips, selectedIds]);
 
   const handleShareSelected = useCallback(() => {
-    if (selectedClips.length === 1) {
-      Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4' }).catch(() => undefined);
-    } else {
-      Share.open({ urls: selectedClips.map(toFilePath) }).catch(() => undefined);
-    }
+    const count = selectedClips.length;
+    const share =
+      count === 1
+        ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4' })
+        : Share.open({ urls: selectedClips.map(toFilePath) });
+    share.then(() => logClipShared(count)).catch(() => undefined);
   }, [selectedClips]);
 
   const handleDeleteSelected = useCallback(() => {
@@ -119,6 +121,7 @@ export function GalleryScreen({ navigation }: Props) {
     const toDelete = clips.filter(c => ids.includes(c.id));
     await Promise.all(toDelete.map(c => deleteClip(c.path)));
     ids.forEach(id => removeClip(id));
+    logClipDeleted(ids.length);
     setSelectedIds(new Set());
   }, [pendingDeleteIds, clips, removeClip]);
 

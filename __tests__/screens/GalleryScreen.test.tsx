@@ -2,12 +2,14 @@ import React from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import analytics from '@react-native-firebase/analytics';
 import { GalleryScreen } from '../../src/screens/GalleryScreen';
 import { useRecordingStore } from '../../src/store/recordingStore';
 import { CLIPS_DIR } from '../../src/utils/files';
 
 const mockedRNFS = RNFS as jest.Mocked<typeof RNFS>;
 const mockedShare = Share as jest.Mocked<typeof Share>;
+const mockedLogEvent = analytics().logEvent as jest.Mock;
 
 const navigateMock = jest.fn();
 const goBackMock = jest.fn();
@@ -105,9 +107,10 @@ describe('GalleryScreen', () => {
     expect(mockedRNFS.unlink).toHaveBeenCalledWith(`${CLIPS_DIR}/clip_1000_d12000.mp4`);
     expect(queryByTestId('clip-clip_1000_d12000.mp4')).toBeNull();
     expect(queryByTestId('selection-toolbar')).toBeNull();
+    expect(mockedLogEvent).toHaveBeenCalledWith('clip_deleted', { count: 1 });
   });
 
-  it('sharing selected clips opens the native share sheet', async () => {
+  it('sharing selected clips opens the native share sheet and logs it', async () => {
     mockedRNFS.readDir.mockResolvedValue([clipEntry('clip_1000_d12000.mp4', new Date())] as never);
     mockedShare.open.mockResolvedValue({} as never);
 
@@ -118,5 +121,6 @@ describe('GalleryScreen', () => {
     await fireEvent.press(getByTestId('selection-share'));
 
     expect(mockedShare.open).toHaveBeenCalled();
+    await waitFor(() => expect(mockedLogEvent).toHaveBeenCalledWith('clip_shared', { count: 1 }));
   });
 });

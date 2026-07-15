@@ -26,6 +26,14 @@ setup_permissions([
 platform :ios, '16.0'
 prepare_react_native_project!
 
+# Firebase Analytics is usage-stats only here (no ads), so skip the ad-id
+# variant -- it would otherwise require an App Tracking Transparency prompt.
+$RNFirebaseAnalyticsWithoutAdIdSupport = true
+
+# Required for RNFB's Swift pods (e.g. FirebaseCoreInternal) to build as
+# static libraries -- see "cannot yet be integrated as static libraries" error.
+use_modular_headers!
+
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
   Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
@@ -48,5 +56,15 @@ target 'Peguei' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # use_modular_headers! (above) makes plain-C pods like nanopb (a Firebase
+    # transitive dep) modular too, which then fails to compile with
+    # "non-modular-include-in-framework-module" treated as a hard error.
+    # Allowing non-modular includes is the standard fix for this combination.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      end
+    end
   end
 end

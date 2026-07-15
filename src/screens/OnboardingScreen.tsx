@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useOnboardingStore } from '../store/onboardingStore';
+import { logOnboardingCompleted, logOnboardingSkipped } from '../utils/analytics';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import type { RootStackParamList } from '../types';
@@ -120,14 +121,19 @@ export function OnboardingScreen({ navigation }: Props) {
 
   const isLast = index === SLIDES.length - 1;
 
-  const finish = () => {
+  const finish = (source: 'completed' | 'skipped') => {
     completeOnboarding();
+    if (source === 'skipped') {
+      logOnboardingSkipped();
+    } else {
+      logOnboardingCompleted();
+    }
     navigation.replace('Permissions');
   };
 
   const goNext = () => {
     if (isLast) {
-      finish();
+      finish('completed');
       return;
     }
     scrollRef.current?.scrollTo({ x: (index + 1) * width, animated: true });
@@ -142,7 +148,7 @@ export function OnboardingScreen({ navigation }: Props) {
     <View style={styles.container} testID="onboarding-screen">
       <SafeAreaView style={styles.safeArea}>
         {!isLast && (
-          <Pressable onPress={finish} style={styles.skip} testID="onboarding-skip">
+          <Pressable onPress={() => finish('skipped')} style={styles.skip} testID="onboarding-skip">
             <Text style={styles.skipText}>Pular</Text>
           </Pressable>
         )}

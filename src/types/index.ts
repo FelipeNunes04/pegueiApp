@@ -70,4 +70,5 @@ export type RootStackParamList = {
   Settings: undefined;
   Gallery: undefined;
   ClipPreview: { clipId: string };
+  Tips: undefined;
 };

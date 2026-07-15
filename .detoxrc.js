@@ -48,6 +48,12 @@ module.exports = {
       // installed on this Mac, so the default (latest) runtime can't boot it.
       device: { type: 'iPhone 11 Pro Max', os: 'iOS 17.5' },
     },
+    simulatorIpad13: {
+      type: 'ios.simulator',
+      // App Store Connect's "13-inch iPad Display" bucket, required because
+      // the app is built universal (TARGETED_DEVICE_FAMILY = "1,2").
+      device: { type: 'iPad Pro 13-inch (M4)' },
+    },
   },
   configurations: {
     'ios.sim.debug': {
@@ -64,6 +70,10 @@ module.exports = {
     },
     'ios.sim.screenshots.65': {
       device: 'simulator65',
+      app: 'ios.debug',
+    },
+    'ios.sim.screenshots.ipad13': {
+      device: 'simulatorIpad13',
       app: 'ios.debug',
     },
   },

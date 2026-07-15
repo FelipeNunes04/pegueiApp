@@ -4,6 +4,7 @@ import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEve
 import { useRecordingStore } from '../store/recordingStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { encodeClipFilename } from '../utils/files';
+import { logClipSaved } from '../utils/analytics';
 import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../types';
 
 /**
@@ -155,6 +156,7 @@ export function useCircularBuffer() {
         addClip(clip);
         setPhase('buffering');
       }
+      logClipSaved(result.durationSeconds);
       return clip;
     } catch (err) {
       if (isMountedRef.current) {

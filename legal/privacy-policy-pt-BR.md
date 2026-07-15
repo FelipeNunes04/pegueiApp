@@ -23,9 +23,18 @@ O Peguei foi projetado para funcionar **inteiramente no seu aparelho**, sem depe
 
 - **Não envia vídeo, áudio ou preview da câmera para nenhum servidor.** Toda a gravação, o buffer e o salvamento de clipes acontecem localmente, no seu aparelho.
 - **Não usa serviços de terceiros para processar áudio ou voz.** O áudio captado é gravado apenas na faixa de som do próprio clipe salvo; o App não tem nenhum recurso de comando de voz ou reconhecimento de fala nesta versão.
-- **Não coleta analytics, métricas de uso ou dados de comportamento** nesta versão. [Se isso mudar no futuro, esta seção será atualizada antes da mudança entrar em vigor, e esta política passará a listar o serviço de analytics usado, quais eventos são coletados e a base legal aplicável.]
 - **Não exibe anúncios.**
 - **Não tem cadastro de conta, login ou coleta de dados pessoais** (nome, e-mail, telefone) para o funcionamento do App.
+
+## 2.1 Analytics
+
+O App usa o **Firebase Analytics** (serviço do Google) para entender, de forma agregada, quais telas e funções são usadas — isso nos ajuda a priorizar melhorias e, no futuro, embasar conversas com parceiros. O que é coletado:
+
+- **Visualizações de tela** (ex.: qual tela do App foi aberta).
+- **Eventos de uso**: um clipe foi salvo (com a duração, sem o conteúdo do vídeo) e se a chave Pix de doação foi copiada.
+- Identificadores técnicos padrão do Firebase (ID de instalação do App, modelo do aparelho, versão do sistema operacional) — não coletamos nome, e-mail, telefone ou qualquer identificador de publicidade (Ad ID).
+
+Esses dados são processados pelo Google como operador, conforme a [Política de Privacidade do Google](https://policies.google.com/privacy) e os [Termos do Firebase](https://firebase.google.com/terms). Nenhum vídeo, áudio ou imagem é enviado — apenas os eventos e metadados descritos acima.
 
 ## 4. Onde seus dados ficam armazenados
 
@@ -45,7 +54,7 @@ Você pode revogar qualquer permissão a qualquer momento nas configurações do
 
 ## 6. Seus direitos (LGPD e legislações equivalentes)
 
-Como o Peguei não coleta dados pessoais em um servidor, a maior parte dos direitos garantidos pela LGPD (acesso, correção, exclusão, portabilidade) já pode ser exercida diretamente por você, no próprio aparelho: os clipes e configurações estão sob seu controle local. Ainda assim, se você tiver qualquer dúvida ou solicitação relacionada a privacidade, entre em contato pelo e-mail informado na Seção 1.
+Como o Peguei não coleta dados pessoais identificáveis em um servidor próprio (os únicos dados enviados a um servidor são os eventos de analytics agregados descritos na Seção 2.1), a maior parte dos direitos garantidos pela LGPD (acesso, correção, exclusão, portabilidade) já pode ser exercida diretamente por você, no próprio aparelho: os clipes e configurações estão sob seu controle local. Ainda assim, se você tiver qualquer dúvida ou solicitação relacionada a privacidade — incluindo sobre os dados de analytics — entre em contato pelo e-mail informado na Seção 1.
 
 Se você estiver localizado no Espaço Econômico Europeu, Reino Unido ou Califórnia, você pode ter direitos adicionais previstos no GDPR ou no CCPA, respectivamente — entre em contato conosco para exercê-los.
 

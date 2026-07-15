@@ -1,10 +1,12 @@
 import React from 'react';
 import { act, fireEvent, render } from '@testing-library/react-native';
+import analytics from '@react-native-firebase/analytics';
 import { OnboardingScreen } from '../../src/screens/OnboardingScreen';
 import { useOnboardingStore } from '../../src/store/onboardingStore';
 
 const replaceMock = jest.fn();
 const fakeNavigation = { replace: replaceMock } as never;
+const mockedLogEvent = analytics().logEvent as jest.Mock;
 
 describe('OnboardingScreen', () => {
   beforeEach(() => {
@@ -30,6 +32,7 @@ describe('OnboardingScreen', () => {
 
     expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
     expect(replaceMock).toHaveBeenCalledWith('Permissions');
+    expect(mockedLogEvent).toHaveBeenCalledWith('onboarding_skipped');
   });
 
   it('never mentions paid plans or subscriptions anywhere in the copy', async () => {

@@ -23,9 +23,18 @@ Peguei is designed to work **entirely on your device**, without relying on a ser
 
 - **It does not send video, audio, or the camera preview to any server.** All recording, buffering, and clip saving happen locally, on your device.
 - **It does not use third-party services to process audio or voice.** Captured audio is only recorded into the saved clip's own sound track; the App has no voice-command or speech-recognition feature in this version.
-- **It does not collect analytics, usage metrics, or behavioral data** in this version. [If this changes in the future, this section will be updated before the change takes effect, and this policy will list the analytics service used, which events are collected, and the applicable legal basis.]
 - **It does not display ads.**
 - **It has no account, login, or personal data collection** (name, email, phone number) for the App to function.
+
+## 2.1 Analytics
+
+The App uses **Firebase Analytics** (a Google service) to understand, in aggregate, which screens and features are used — this helps us prioritize improvements and, in the future, support conversations with partners. What is collected:
+
+- **Screen views** (e.g., which screen of the App was opened).
+- **Usage events**: a clip was saved (with its duration, not the video content) and whether the donation Pix key was copied.
+- Standard Firebase technical identifiers (app install ID, device model, OS version) — we do not collect name, email, phone number, or any advertising identifier (Ad ID).
+
+This data is processed by Google as a processor, under [Google's Privacy Policy](https://policies.google.com/privacy) and [Firebase's Terms](https://firebase.google.com/terms). No video, audio, or images are ever sent — only the events and metadata described above.
 
 ## 4. Where your data is stored
 
@@ -45,7 +54,7 @@ You can revoke any permission at any time from your operating system's settings.
 
 ## 6. Your rights (GDPR, CCPA, LGPD, and equivalent laws)
 
-Because Peguei does not collect personal data on a server, most rights guaranteed by privacy laws (access, correction, deletion, portability) can already be exercised directly by you, on your own device: clips and settings are under your local control. If you have any privacy-related question or request, contact us using the email in Section 1.
+Because Peguei does not collect identifiable personal data on a server of its own (the only data sent to a server is the aggregated analytics events described in Section 2.1), most rights guaranteed by privacy laws (access, correction, deletion, portability) can already be exercised directly by you, on your own device: clips and settings are under your local control. If you have any privacy-related question or request — including about analytics data — contact us using the email in Section 1.
 
 If you are located in the European Economic Area, the United Kingdom, or California, you may have additional rights under the GDPR or CCPA, respectively — contact us to exercise them. If you are located in Brazil, you have rights under the LGPD (access, correction, deletion, portability, and others) — the same contact channel applies.
 

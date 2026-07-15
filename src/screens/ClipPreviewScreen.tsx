@@ -10,6 +10,7 @@ import { BackArrowIcon, PauseIcon, PlayIcon, ShareIcon, TrashIcon } from '../com
 import { ScrimIconButton } from '../components/ScrimIconButton';
 import { formatDuration } from '../utils/duration';
 import { deleteClip } from '../utils/files';
+import { logClipDeleted, logClipShared } from '../utils/analytics';
 import { useRecordingStore } from '../store/recordingStore';
 import { colors } from '../theme/colors';
 import type { RootStackParamList } from '../types';
@@ -46,7 +47,9 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
 
   const handleShare = useCallback(() => {
     if (!clip) return;
-    Share.open({ url: toFilePath(clip.path), type: 'video/mp4' }).catch(() => undefined);
+    Share.open({ url: toFilePath(clip.path), type: 'video/mp4' })
+      .then(() => logClipShared(1))
+      .catch(() => undefined);
   }, [clip]);
 
   const confirmDelete = useCallback(async () => {
@@ -54,6 +57,7 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
     setPendingDelete(false);
     await deleteClip(clip.path);
     removeClip(clip.id);
+    logClipDeleted(1);
     navigation.goBack();
   }, [clip, removeClip, navigation]);
 
