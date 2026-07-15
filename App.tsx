@@ -9,17 +9,17 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import analytics from '@react-native-firebase/analytics';
-import { OnboardingScreen } from './src/screens/OnboardingScreen';
-import { PermissionsScreen } from './src/screens/PermissionsScreen';
-import { CameraScreen } from './src/screens/CameraScreen';
-import { SettingsScreen } from './src/screens/SettingsScreen';
-import { GalleryScreen } from './src/screens/GalleryScreen';
-import { ClipPreviewScreen } from './src/screens/ClipPreviewScreen';
-import { TipsScreen } from './src/screens/TipsScreen';
-import { useOnboardingStore } from './src/store/onboardingStore';
-import { usePermissions } from './src/hooks/usePermissions';
-import { colors } from './src/theme/colors';
-import type { RootStackParamList } from './src/types';
+import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
+import { PermissionsScreen } from './src/features/permissions/PermissionsScreen';
+import { CameraScreen } from './src/features/camera/CameraScreen';
+import { SettingsScreen } from './src/features/settings/SettingsScreen';
+import { GalleryScreen } from './src/features/gallery/GalleryScreen';
+import { ClipPreviewScreen } from './src/features/gallery/ClipPreviewScreen';
+import { TipsScreen } from './src/features/tips/TipsScreen';
+import { useOnboardingStore } from './src/features/onboarding/store/onboardingStore';
+import { usePermissions } from './src/features/permissions/hooks/usePermissions';
+import { colors } from './src/shared/theme/colors';
+import type { RootStackParamList } from './src/shared/types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
