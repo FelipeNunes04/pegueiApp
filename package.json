@@ -5,6 +5,7 @@
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
+    "ios:device": "bash scripts/run-ios-device.sh",
     "eas-build-pre-install": "bash scripts/eas-build-pre-install.sh",
     "lint": "eslint .",
     "start": "react-native start",
