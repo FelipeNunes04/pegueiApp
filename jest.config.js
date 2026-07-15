@@ -9,4 +9,18 @@ module.exports = {
   transformIgnorePatterns: [
     'node_modules/(?!(@?react-native[^/]*|@react-navigation)/)',
   ],
+  collectCoverageFrom: [
+    'App.tsx',
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.styles.ts',
+    '!src/shared/types/**',
+  ],
+  coverageThreshold: {
+    global: {
+      statements: 80,
+      branches: 65,
+      functions: 75,
+      lines: 80,
+    },
+  },
 };
