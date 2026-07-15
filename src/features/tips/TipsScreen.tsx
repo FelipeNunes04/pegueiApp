@@ -1,7 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../shared/theme/colors';
-import { typography } from '../../shared/theme/typography';
+import { ScrollView, Text, View } from 'react-native';
+import { styles } from './TipsScreen.styles';
 
 interface Tip {
   key: string;
@@ -29,7 +28,11 @@ const TIPS: Tip[] = [
 
 export function TipsScreen() {
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} testID="tips-screen">
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      testID="tips-screen"
+    >
       <Text style={styles.intro}>
         Dicas rápidas pra aproveitar melhor o Peguei.
       </Text>
@@ -42,17 +45,3 @@ export function TipsScreen() {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.backgroundDark },
-  content: { padding: 20, paddingBottom: 60 },
-  intro: { ...typography.body, color: 'rgba(242,245,245,0.7)', marginBottom: 20, lineHeight: 20 },
-  card: {
-    backgroundColor: colors.surfaceDark,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  title: { ...typography.bodyStrong, color: colors.textDark, marginBottom: 4 },
-  body: { ...typography.body, color: 'rgba(242,245,245,0.75)', lineHeight: 20 },
-});

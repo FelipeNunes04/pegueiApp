@@ -1,8 +1,8 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { GalleryPlaceholderIcon } from '../../../shared/components/icons';
 import { colors } from '../../../shared/theme/colors';
-import { typography } from '../../../shared/theme/typography';
+import { styles } from './GalleryEmptyState.styles';
 
 interface Props {
   onBackToCamera: () => void;
@@ -17,33 +17,17 @@ export function GalleryEmptyState({ onBackToCamera }: Props) {
       </View>
       <Text style={styles.title}>Nenhum clipe salvo ainda</Text>
       <Text style={styles.subtitle}>
-        Toque no botão da câmera para começar a gravar. O clipe salvo já vem com os segundos anteriores ao toque.
+        Toque no botão da câmera para começar a gravar. O clipe salvo já vem com
+        os segundos anteriores ao toque.
       </Text>
       <Pressable
         accessibilityRole="button"
         testID="gallery-empty-cta"
         onPress={onBackToCamera}
-        style={({ pressed }) => [styles.cta, pressed && styles.pressed]}>
+        style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+      >
         <Text style={styles.ctaText}>Voltar para a câmera</Text>
       </Pressable>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  iconWrapper: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: colors.surfaceDark,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  title: { ...typography.title, color: colors.textDark, textAlign: 'center' },
-  subtitle: { ...typography.body, color: 'rgba(242,245,245,0.6)', textAlign: 'center', marginTop: 6 },
-  cta: { marginTop: 24, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 24, backgroundColor: colors.accent },
-  pressed: { opacity: 0.8 },
-  ctaText: { ...typography.bodyStrong, color: colors.textLight },
-});

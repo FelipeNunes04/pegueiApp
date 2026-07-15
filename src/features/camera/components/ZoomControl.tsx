@@ -1,8 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../../shared/theme/colors';
-import { typography } from '../../../shared/theme/typography';
+import { Pressable, Text, View } from 'react-native';
 import { nearestZoomLevelIndex } from '../utils/zoom';
+import { styles } from './ZoomControl.styles';
 
 interface Props {
   levels: number[];
@@ -40,33 +39,14 @@ export function ZoomControl({ levels, zoomFactor, onSelect }: Props) {
             accessibilityState={{ selected: isActive }}
             testID={`zoom-pill-${level}`}
             onPress={() => onSelect(level)}
-            style={[styles.pill, isActive && styles.pillActive]}>
-            <Text style={[styles.label, isActive && styles.labelActive]}>{formatZoomLabel(level)}</Text>
+            style={[styles.pill, isActive && styles.pillActive]}
+          >
+            <Text style={[styles.label, isActive && styles.labelActive]}>
+              {formatZoomLabel(level)}
+            </Text>
           </Pressable>
         );
       })}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignSelf: 'center',
-    backgroundColor: 'rgba(10,20,20,0.55)',
-    borderRadius: 20,
-    padding: 4,
-    marginBottom: 16,
-  },
-  pill: {
-    minWidth: 36,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  pillActive: { backgroundColor: colors.accent },
-  label: { ...typography.caption, color: 'rgba(255,255,255,0.8)' },
-  labelActive: { color: colors.textLight, fontWeight: '700' },
-});

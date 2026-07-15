@@ -1,22 +1,30 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { usePermissions } from './hooks/usePermissions';
-import type { PermissionKey, PermissionStatus, RootStackParamList } from '../../shared/types';
+import type {
+  PermissionKey,
+  PermissionStatus,
+  RootStackParamList,
+} from '../../shared/types';
 import { PermissionActionButton } from './components/PermissionActionButton';
-import { colors } from '../../shared/theme/colors';
-import { typography } from '../../shared/theme/typography';
+import { styles } from './PermissionsScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Permissions'>;
 
-const EXPLANATIONS: Record<PermissionKey, { title: string; description: string }> = {
+const EXPLANATIONS: Record<
+  PermissionKey,
+  { title: string; description: string }
+> = {
   camera: {
     title: 'Câmera',
-    description: 'Usada para gravar continuamente os últimos segundos e mostrar a imagem ao vivo.',
+    description:
+      'Usada para gravar continuamente os últimos segundos e mostrar a imagem ao vivo.',
   },
   storage: {
     title: 'Armazenamento / Fotos',
-    description: 'Usado para salvar os clipes finais na galeria do seu dispositivo.',
+    description:
+      'Usado para salvar os clipes finais na galeria do seu dispositivo.',
   },
   microphone: {
     title: 'Microfone',
@@ -45,7 +53,11 @@ export function PermissionsScreen({ navigation }: Props) {
   }, [allGranted, navigation]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} testID="permissions-screen">
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      testID="permissions-screen"
+    >
       <Text style={styles.title}>Antes de começar</Text>
       <Text style={styles.subtitle}>
         O Peguei precisa de três permissões. Explicamos cada uma antes de pedir.
@@ -53,7 +65,9 @@ export function PermissionsScreen({ navigation }: Props) {
       {ORDER.map(key => (
         <View key={key} style={styles.card} testID={`permission-card-${key}`}>
           <Text style={styles.cardTitle}>{EXPLANATIONS[key].title}</Text>
-          <Text style={styles.cardDescription}>{EXPLANATIONS[key].description}</Text>
+          <Text style={styles.cardDescription}>
+            {EXPLANATIONS[key].description}
+          </Text>
           <Text style={styles.status}>{STATUS_LABEL[statuses[key]]}</Text>
           <PermissionActionButton
             testID={`permission-action-${key}`}
@@ -66,21 +80,10 @@ export function PermissionsScreen({ navigation }: Props) {
       ))}
       {!allGranted && (
         <Text style={styles.hint}>
-          Se uma permissão foi bloqueada permanentemente, abra as configurações do sistema para este app.
+          Se uma permissão foi bloqueada permanentemente, abra as configurações
+          do sistema para este app.
         </Text>
       )}
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.backgroundDark },
-  content: { padding: 20, paddingBottom: 60 },
-  title: { ...typography.display, fontSize: 24, color: colors.textDark, marginBottom: 8 },
-  subtitle: { ...typography.body, color: 'rgba(242,245,245,0.7)', marginBottom: 20 },
-  card: { backgroundColor: colors.surfaceDark, borderRadius: 12, padding: 16, marginBottom: 16 },
-  cardTitle: { ...typography.title, fontSize: 16, color: colors.textDark, marginBottom: 4 },
-  cardDescription: { ...typography.body, color: 'rgba(242,245,245,0.7)', marginBottom: 8 },
-  status: { ...typography.caption, color: colors.success, marginBottom: 12 },
-  hint: { ...typography.caption, color: 'rgba(242,245,245,0.5)', marginTop: 8 },
-});

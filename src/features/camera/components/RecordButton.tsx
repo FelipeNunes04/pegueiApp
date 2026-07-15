@@ -1,9 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Pressable,
+  Text,
+  View,
+} from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../../../shared/theme/colors';
-import { typography } from '../../../shared/theme/typography';
 import type { RecordingPhase } from '../../../shared/types';
+import { styles } from './RecordButton.styles';
 
 interface Props {
   phase: RecordingPhase;
@@ -11,7 +18,6 @@ interface Props {
   disabled?: boolean;
 }
 
-const SIZE = 84;
 const CONFIRM_FLASH_MS = 700;
 
 function formatElapsed(ms: number): string {
@@ -49,8 +55,18 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
     }
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.12, duration: 550, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 550, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1.12,
+          duration: 550,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 550,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
       ]),
     );
     loop.start();
@@ -85,11 +101,14 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
   const accessibilityLabel = showConfirm
     ? 'Clipe salvo'
     : isSaving
-      ? 'Salvando clipe'
-      : isRecording
-        ? 'Parar gravação'
-        : 'Iniciar gravação';
-  const recordIconColor = disabled && !isRecording && !isSaving ? 'rgba(255,255,255,0.4)' : colors.error;
+    ? 'Salvando clipe'
+    : isRecording
+    ? 'Parar gravação'
+    : 'Iniciar gravação';
+  const recordIconColor =
+    disabled && !isRecording && !isSaving
+      ? 'rgba(255,255,255,0.4)'
+      : colors.error;
 
   return (
     <View style={styles.wrapper}>
@@ -99,7 +118,11 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
         testID="record-button"
         onPress={onPress}
         disabled={isDisabled}
-        style={({ pressed }) => [styles.button, pressed && !isDisabled && styles.pressed]}>
+        style={({ pressed }) => [
+          styles.button,
+          pressed && !isDisabled && styles.pressed,
+        ]}
+      >
         <View style={styles.ring} />
         <View style={styles.iconWrapper}>
           {showConfirm ? (
@@ -116,37 +139,19 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
           ) : isSaving ? (
             <ActivityIndicator color="white" />
           ) : isRecording ? (
-            <Animated.View style={[styles.recordingIcon, { transform: [{ scale: pulse }] }]} />
+            <Animated.View
+              style={[styles.recordingIcon, { transform: [{ scale: pulse }] }]}
+            />
           ) : (
-            <View style={[styles.recordIcon, { backgroundColor: recordIconColor }]} />
+            <View
+              style={[styles.recordIcon, { backgroundColor: recordIconColor }]}
+            />
           )}
         </View>
       </Pressable>
-      {isRecording && <Text style={styles.timer}>{formatElapsed(elapsedMs)}</Text>}
+      {isRecording && (
+        <Text style={styles.timer}>{formatElapsed(elapsedMs)}</Text>
+      )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrapper: { alignItems: 'center' },
-  button: {
-    width: SIZE,
-    height: SIZE,
-    borderRadius: SIZE / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: { opacity: 0.8 },
-  ring: {
-    position: 'absolute',
-    width: SIZE,
-    height: SIZE,
-    borderRadius: SIZE / 2,
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.85)',
-  },
-  iconWrapper: { alignItems: 'center', justifyContent: 'center' },
-  recordIcon: { width: 56, height: 56, borderRadius: 28 },
-  recordingIcon: { width: 30, height: 30, borderRadius: 8, backgroundColor: colors.error },
-  timer: { ...typography.caption, color: 'white', marginTop: 8 },
-});

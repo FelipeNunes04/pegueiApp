@@ -4,7 +4,6 @@ import {
   NativeSyntheticEvent,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   View,
   useWindowDimensions,
@@ -13,17 +12,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useOnboardingStore } from './store/onboardingStore';
-import { logOnboardingCompleted, logOnboardingSkipped } from '../../shared/utils/analytics';
+import {
+  logOnboardingCompleted,
+  logOnboardingSkipped,
+} from '../../shared/utils/analytics';
 import { colors } from '../../shared/theme/colors';
-import { typography } from '../../shared/theme/typography';
 import type { RootStackParamList } from '../../shared/types';
+import { styles } from './OnboardingScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Onboarding'>;
 
 function BufferIllustration() {
   return (
     <Svg width={160} height={160} viewBox="0 0 160 160">
-      <Circle cx={80} cy={80} r={64} stroke={colors.primaryLight} strokeWidth={3} fill="none" opacity={0.4} />
+      <Circle
+        cx={80}
+        cy={80}
+        r={64}
+        stroke={colors.primaryLight}
+        strokeWidth={3}
+        fill="none"
+        opacity={0.4}
+      />
       <Path
         d="M80 16 A64 64 0 0 1 144 80"
         stroke={colors.accent}
@@ -31,7 +41,14 @@ function BufferIllustration() {
         strokeLinecap="round"
         fill="none"
       />
-      <Rect x={30} y={104} width={100} height={10} rx={5} fill="rgba(255,255,255,0.15)" />
+      <Rect
+        x={30}
+        y={104}
+        width={100}
+        height={10}
+        rx={5}
+        fill="rgba(255,255,255,0.15)"
+      />
       <Rect x={78} y={104} width={40} height={10} rx={5} fill={colors.accent} />
     </Svg>
   );
@@ -40,8 +57,22 @@ function BufferIllustration() {
 function TapIllustration() {
   return (
     <Svg width={160} height={160} viewBox="0 0 160 160">
-      <Circle cx={80} cy={80} r={62} stroke="rgba(255,255,255,0.2)" strokeWidth={3} fill="none" />
-      <Circle cx={80} cy={80} r={44} stroke="rgba(255,255,255,0.85)" strokeWidth={4} fill="none" />
+      <Circle
+        cx={80}
+        cy={80}
+        r={62}
+        stroke="rgba(255,255,255,0.2)"
+        strokeWidth={3}
+        fill="none"
+      />
+      <Circle
+        cx={80}
+        cy={80}
+        r={44}
+        stroke="rgba(255,255,255,0.85)"
+        strokeWidth={4}
+        fill="none"
+      />
       <Circle cx={80} cy={80} r={32} fill={colors.error} />
     </Svg>
   );
@@ -50,13 +81,22 @@ function TapIllustration() {
 function VersatilityIllustration() {
   return (
     <Svg width={160} height={160} viewBox="0 0 160 160">
-      <Path d="M20 120 L60 70 L90 100 L112 76 L140 120 Z" fill={colors.primaryLight} opacity={0.5} />
+      <Path
+        d="M20 120 L60 70 L90 100 L112 76 L140 120 Z"
+        fill={colors.primaryLight}
+        opacity={0.5}
+      />
       <Path
         d="M80 40 C80 40 68 55 68 66 C68 74 73 80 80 80 C87 80 92 74 92 66 C92 55 80 40 80 40 Z"
         fill={colors.accent}
       />
       <Path d="M80 80 L80 118" stroke={colors.accent} strokeWidth={3} />
-      <Path d="M80 108 L94 100" stroke={colors.accent} strokeWidth={3} fill="none" />
+      <Path
+        d="M80 108 L94 100"
+        stroke={colors.accent}
+        strokeWidth={3}
+        fill="none"
+      />
     </Svg>
   );
 }
@@ -65,7 +105,14 @@ function WelcomeIllustration() {
   return (
     <Svg width={160} height={160} viewBox="0 0 160 160">
       <Circle cx={80} cy={80} r={64} fill={colors.primary} opacity={0.25} />
-      <Circle cx={80} cy={80} r={40} stroke={colors.accent} strokeWidth={5} fill="none" />
+      <Circle
+        cx={80}
+        cy={80}
+        r={40}
+        stroke={colors.accent}
+        strokeWidth={5}
+        fill="none"
+      />
       <Path
         d="M80 48 C70 48 63 58 63 68 C63 82 80 100 80 100"
         stroke={colors.primaryLight}
@@ -88,15 +135,13 @@ const SLIDES: Slide[] = [
   {
     key: 'buffer',
     title: 'Nunca mais perca o momento',
-    body:
-      'Assim que você abre a câmera, o Peguei já está gravando em segundo plano, guardando só os últimos segundos. Quando rolar aquele momento, o que já tinha acontecido também vai pro clipe salvo.',
+    body: 'Assim que você abre a câmera, o Peguei já está gravando em segundo plano, guardando só os últimos segundos. Quando rolar aquele momento, o que já tinha acontecido também vai pro clipe salvo.',
     Illustration: BufferIllustration,
   },
   {
     key: 'tap',
     title: 'Toque para gravar, toque para parar',
-    body:
-      'Sem gravar do zero e sem correr contra o tempo: um toque começa a gravar e já traz junto o que tinha acontecido antes. Toque de novo quando quiser parar — o clipe salvo sempre começa antes do primeiro toque.',
+    body: 'Sem gravar do zero e sem correr contra o tempo: um toque começa a gravar e já traz junto o que tinha acontecido antes. Toque de novo quando quiser parar — o clipe salvo sempre começa antes do primeiro toque.',
     Illustration: TapIllustration,
   },
   {
@@ -148,7 +193,11 @@ export function OnboardingScreen({ navigation }: Props) {
     <View style={styles.container} testID="onboarding-screen">
       <SafeAreaView style={styles.safeArea}>
         {!isLast && (
-          <Pressable onPress={() => finish('skipped')} style={styles.skip} testID="onboarding-skip">
+          <Pressable
+            onPress={() => finish('skipped')}
+            style={styles.skip}
+            testID="onboarding-skip"
+          >
             <Text style={styles.skipText}>Pular</Text>
           </Pressable>
         )}
@@ -159,9 +208,14 @@ export function OnboardingScreen({ navigation }: Props) {
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           onMomentumScrollEnd={handleScrollEnd}
-          testID="onboarding-scroll">
+          testID="onboarding-scroll"
+        >
           {SLIDES.map(slide => (
-            <View key={slide.key} style={[styles.slide, { width }]} testID={`onboarding-slide-${slide.key}`}>
+            <View
+              key={slide.key}
+              style={[styles.slide, { width }]}
+              testID={`onboarding-slide-${slide.key}`}
+            >
               <slide.Illustration />
               <Text style={styles.title}>{slide.title}</Text>
               <Text style={styles.body}>{slide.body}</Text>
@@ -172,37 +226,23 @@ export function OnboardingScreen({ navigation }: Props) {
         <View style={styles.footer}>
           <View style={styles.dots}>
             {SLIDES.map((slide, i) => (
-              <View key={slide.key} style={[styles.dot, i === index && styles.dotActive]} />
+              <View
+                key={slide.key}
+                style={[styles.dot, i === index && styles.dotActive]}
+              />
             ))}
           </View>
-          <Pressable onPress={goNext} style={styles.nextButton} testID="onboarding-next">
-            <Text style={styles.nextLabel}>{isLast ? 'Continuar' : 'Próximo'}</Text>
+          <Pressable
+            onPress={goNext}
+            style={styles.nextButton}
+            testID="onboarding-next"
+          >
+            <Text style={styles.nextLabel}>
+              {isLast ? 'Continuar' : 'Próximo'}
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.backgroundDark },
-  safeArea: { flex: 1 },
-  skip: { position: 'absolute', top: 8, right: 16, zIndex: 1, padding: 12 },
-  skipText: { ...typography.body, color: 'rgba(242,245,245,0.6)' },
-  slide: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  title: { ...typography.display, color: colors.textDark, textAlign: 'center', marginTop: 32, marginBottom: 12 },
-  body: { ...typography.body, color: 'rgba(242,245,245,0.75)', textAlign: 'center', lineHeight: 22 },
-  footer: { paddingHorizontal: 24, paddingBottom: 16, alignItems: 'center' },
-  dots: { flexDirection: 'row', marginBottom: 20 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.25)', marginHorizontal: 4 },
-  dotActive: { backgroundColor: colors.accent, width: 20 },
-  nextButton: {
-    backgroundColor: colors.accent,
-    borderRadius: 24,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignSelf: 'stretch',
-    alignItems: 'center',
-  },
-  nextLabel: { ...typography.bodyStrong, color: colors.textLight },
-});

@@ -6,7 +6,13 @@ import Video, { type VideoRef } from 'react-native-video';
 import Share from 'react-native-share';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DeleteConfirmModal } from '../../shared/components/DeleteConfirmModal';
-import { BackArrowIcon, PauseIcon, PlayIcon, ShareIcon, TrashIcon } from '../../shared/components/icons';
+import {
+  BackArrowIcon,
+  PauseIcon,
+  PlayIcon,
+  ShareIcon,
+  TrashIcon,
+} from '../../shared/components/icons';
 import { ScrimIconButton } from '../../shared/components/ScrimIconButton';
 import { formatDuration } from '../../shared/utils/duration';
 import { deleteClip } from '../../shared/utils/files';
@@ -14,6 +20,7 @@ import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import { colors } from '../../shared/theme/colors';
 import type { RootStackParamList } from '../../shared/types';
+import { styles } from './ClipPreviewScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ClipPreview'>;
 
@@ -67,7 +74,11 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
 
   return (
     <View style={styles.container} testID="clip-preview-screen">
-      <Pressable style={StyleSheet.absoluteFill} onPress={togglePlayback} accessibilityRole="button">
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={togglePlayback}
+        accessibilityRole="button"
+      >
         <Video
           ref={videoRef}
           source={{ uri: toFilePath(clip.path) }}
@@ -87,22 +98,47 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
         )}
       </Pressable>
 
-      <SafeAreaView edges={['top']} style={styles.topBar} pointerEvents="box-none">
-        <ScrimIconButton onPress={() => navigation.goBack()} accessibilityLabel="Voltar" testID="preview-back">
+      <SafeAreaView
+        edges={['top']}
+        style={styles.topBar}
+        pointerEvents="box-none"
+      >
+        <ScrimIconButton
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Voltar"
+          testID="preview-back"
+        >
           <BackArrowIcon />
         </ScrimIconButton>
         <View style={styles.topActions}>
-          <ScrimIconButton onPress={handleShare} accessibilityLabel="Compartilhar" testID="preview-share">
+          <ScrimIconButton
+            onPress={handleShare}
+            accessibilityLabel="Compartilhar"
+            testID="preview-share"
+          >
             <ShareIcon />
           </ScrimIconButton>
-          <ScrimIconButton onPress={() => setPendingDelete(true)} accessibilityLabel="Excluir" testID="preview-delete">
+          <ScrimIconButton
+            onPress={() => setPendingDelete(true)}
+            accessibilityLabel="Excluir"
+            testID="preview-delete"
+          >
             <TrashIcon color={colors.error} />
           </ScrimIconButton>
         </View>
       </SafeAreaView>
 
-      <SafeAreaView edges={['bottom']} style={styles.bottomBar} pointerEvents="box-none">
-        <Pressable onPress={togglePlayback} accessibilityRole="button" testID="preview-play-pause" style={styles.playPauseButton}>
+      <SafeAreaView
+        edges={['bottom']}
+        style={styles.bottomBar}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          onPress={togglePlayback}
+          accessibilityRole="button"
+          testID="preview-play-pause"
+          style={styles.playPauseButton}
+        >
           {paused ? <PlayIcon size={22} /> : <PauseIcon size={22} />}
         </Pressable>
         <Text style={styles.time}>{formatDuration(currentTime)}</Text>
@@ -132,41 +168,3 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'black' },
-  centerPlayButton: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  topActions: { flexDirection: 'row', gap: 8 },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  playPauseButton: { marginRight: 8 },
-  slider: { flex: 1, marginHorizontal: 8 },
-  time: { color: 'white', fontSize: 12, minWidth: 36, textAlign: 'center' },
-});

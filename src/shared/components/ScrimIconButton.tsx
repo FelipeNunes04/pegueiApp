@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { styles } from './ScrimIconButton.styles';
 
 interface Props {
   onPress: () => void;
@@ -15,7 +16,13 @@ interface Props {
  * what's behind them — the scrim (not a blur, see BRAND.md/DECISIONS.md) is
  * the actual WCAG AA contrast mechanism here.
  */
-export function ScrimIconButton({ onPress, accessibilityLabel, testID, size = 40, children }: Props) {
+export function ScrimIconButton({
+  onPress,
+  accessibilityLabel,
+  testID,
+  size = 40,
+  children,
+}: Props) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -26,18 +33,9 @@ export function ScrimIconButton({ onPress, accessibilityLabel, testID, size = 40
         styles.scrim,
         { width: size, height: size, borderRadius: size / 2 },
         pressed && styles.pressed,
-      ]}>
+      ]}
+    >
       <View style={styles.iconWrapper}>{children}</View>
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  scrim: {
-    backgroundColor: 'rgba(10,20,20,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: { opacity: 0.7 },
-  iconWrapper: { alignItems: 'center', justifyContent: 'center' },
-});

@@ -1,8 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Text, View } from 'react-native';
 import { colors } from '../../../shared/theme/colors';
-import { typography } from '../../../shared/theme/typography';
 import type { RecordingPhase } from '../../../shared/types';
+import { styles } from './BufferIndicator.styles';
 
 interface Props {
   phase: RecordingPhase;
@@ -28,8 +28,18 @@ export function BufferIndicator({ phase, bufferSeconds }: Props) {
     }
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.25, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1.25,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
       ]),
     );
     loop.start();
@@ -41,7 +51,10 @@ export function BufferIndicator({ phase, bufferSeconds }: Props) {
   return (
     <View style={styles.container} testID="buffer-indicator">
       <Animated.View
-        style={[styles.dot, { backgroundColor: dotColor, transform: [{ scale: pulse }] }]}
+        style={[
+          styles.dot,
+          { backgroundColor: dotColor, transform: [{ scale: pulse }] },
+        ]}
         testID="buffer-indicator-ring"
       />
       <View>
@@ -51,17 +64,3 @@ export function BufferIndicator({ phase, bufferSeconds }: Props) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(10,20,20,0.55)',
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  dot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
-  label: { ...typography.caption, color: colors.textDark, lineHeight: 14 },
-  subLabel: { ...typography.caption, color: 'rgba(242,245,245,0.7)', fontSize: 10, lineHeight: 12 },
-});

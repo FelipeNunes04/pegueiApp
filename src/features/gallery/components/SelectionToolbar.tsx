@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShareIcon, TrashIcon } from '../../../shared/components/icons';
 import { colors } from '../../../shared/theme/colors';
+import { styles } from './SelectionToolbar.styles';
 
 interface Props {
   count: number;
@@ -20,14 +21,19 @@ export function SelectionToolbar({ count, onShare, onDelete }: Props) {
   const disabled = count === 0;
 
   return (
-    <SafeAreaView edges={['bottom']} style={styles.container} testID="selection-toolbar">
+    <SafeAreaView
+      edges={['bottom']}
+      style={styles.container}
+      testID="selection-toolbar"
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Compartilhar selecionados"
         testID="selection-share"
         disabled={disabled}
         onPress={onShare}
-        style={[styles.action, disabled && styles.disabled]}>
+        style={[styles.action, disabled && styles.disabled]}
+      >
         <ShareIcon />
       </Pressable>
       <Pressable
@@ -36,24 +42,10 @@ export function SelectionToolbar({ count, onShare, onDelete }: Props) {
         testID="selection-delete"
         disabled={disabled}
         onPress={onDelete}
-        style={[styles.action, disabled && styles.disabled]}>
+        style={[styles.action, disabled && styles.disabled]}
+      >
         <TrashIcon color={colors.error} />
       </Pressable>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.surfaceDark,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.1)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-evenly',
-    paddingTop: 12,
-  },
-  // 22px icon + 11px padding on all sides = 44pt tap target (Apple HIG / Material minimum).
-  action: { padding: 11 },
-  disabled: { opacity: 0.35 },
-});

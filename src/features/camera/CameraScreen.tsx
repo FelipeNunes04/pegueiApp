@@ -16,14 +16,14 @@ import { ScrimIconButton } from '../../shared/components/ScrimIconButton';
 import { ZoomControl } from './components/ZoomControl';
 import { SettingsGearIcon } from '../../shared/components/icons';
 import { listSavedClips } from '../../shared/utils/files';
-import { colors } from '../../shared/theme/colors';
-import { typography } from '../../shared/theme/typography';
 import type { RootStackParamList } from '../../shared/types';
+import { styles } from './CameraScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Camera'>;
 
 export function CameraScreen({ navigation }: Props) {
-  const { phase, start, stop, startRecording, stopRecording } = useCircularBuffer();
+  const { phase, start, stop, startRecording, stopRecording } =
+    useCircularBuffer();
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const errorMessage = useRecordingStore(s => s.errorMessage);
   const clearError = useRecordingStore(s => s.clearError);
@@ -43,7 +43,9 @@ export function CameraScreen({ navigation }: Props) {
   // Refreshes the shared clip list so the gallery button's thumbnail reflects
   // the most recent save, including clips saved in a previous app session.
   const refreshClips = useCallback(() => {
-    listSavedClips().then(setClips).catch(() => undefined);
+    listSavedClips()
+      .then(setClips)
+      .catch(() => undefined);
   }, [setClips]);
 
   useEffect(() => {
@@ -72,14 +74,23 @@ export function CameraScreen({ navigation }: Props) {
   return (
     <View style={styles.container} testID="camera-screen">
       <CircularBufferPreview style={StyleSheet.absoluteFill} isActive />
-      <View style={StyleSheet.absoluteFill} {...pinchHandlers} testID="pinch-zoom-overlay" />
+      <View
+        style={StyleSheet.absoluteFill}
+        {...pinchHandlers}
+        testID="pinch-zoom-overlay"
+      />
 
-      <SafeAreaView edges={['top']} style={styles.topBar} pointerEvents="box-none">
+      <SafeAreaView
+        edges={['top']}
+        style={styles.topBar}
+        pointerEvents="box-none"
+      >
         <BufferIndicator phase={phase} bufferSeconds={bufferSeconds} />
         <ScrimIconButton
           onPress={() => navigation.navigate('Settings')}
           accessibilityLabel="Abrir configurações"
-          testID="open-settings">
+          testID="open-settings"
+        >
           <SettingsGearIcon />
         </ScrimIconButton>
       </SafeAreaView>
@@ -93,13 +104,26 @@ export function CameraScreen({ navigation }: Props) {
         </View>
       )}
 
-      <SafeAreaView edges={['bottom']} style={styles.bottomArea} pointerEvents="box-none">
-        <ZoomControl levels={pillLevels} zoomFactor={zoomFactor} onSelect={setZoom} />
+      <SafeAreaView
+        edges={['bottom']}
+        style={styles.bottomArea}
+        pointerEvents="box-none"
+      >
+        <ZoomControl
+          levels={pillLevels}
+          zoomFactor={zoomFactor}
+          onSelect={setZoom}
+        />
         <View style={styles.bottomBar}>
-          <GalleryButton lastClip={clips[0] ?? null} onPress={() => navigation.navigate('Gallery')} />
+          <GalleryButton
+            lastClip={clips[0] ?? null}
+            onPress={() => navigation.navigate('Gallery')}
+          />
           <RecordButton
             phase={phase}
-            onPress={() => (phase === 'recording' ? stopRecording() : startRecording())}
+            onPress={() =>
+              phase === 'recording' ? stopRecording() : startRecording()
+            }
           />
           <View style={styles.bottomSpacer} />
         </View>
@@ -107,45 +131,3 @@ export function CameraScreen({ navigation }: Props) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'black' },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  bottomArea: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingBottom: 16,
-  },
-  bottomSpacer: { width: 44 },
-  errorBanner: {
-    position: 'absolute',
-    top: 100,
-    left: 16,
-    right: 16,
-    backgroundColor: colors.error,
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  errorText: { ...typography.body, color: 'white', flex: 1 },
-  errorDismiss: { ...typography.bodyStrong, color: 'white', marginLeft: 12 },
-});

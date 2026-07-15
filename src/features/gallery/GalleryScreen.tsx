@@ -1,18 +1,32 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react';
+import {
+  FlatList,
+  Pressable,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import Share from 'react-native-share';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ClipGridThumbnail } from './components/ClipGridThumbnail';
 import { GalleryEmptyState } from './components/GalleryEmptyState';
 import { SelectionToolbar } from './components/SelectionToolbar';
 import { DeleteConfirmModal } from '../../shared/components/DeleteConfirmModal';
-import { buildGalleryListItems, type GalleryListItem } from './utils/dateGroups';
+import {
+  buildGalleryListItems,
+  type GalleryListItem,
+} from './utils/dateGroups';
 import { deleteClip, listSavedClips } from '../../shared/utils/files';
 import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
 import { useRecordingStore } from '../../shared/store/recordingStore';
-import { colors } from '../../shared/theme/colors';
-import { typography } from '../../shared/theme/typography';
 import type { RootStackParamList, SavedClip } from '../../shared/types';
+import { styles } from './GalleryScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Gallery'>;
 
@@ -27,7 +41,11 @@ function toFilePath(clip: SavedClip): string {
 // every render -- that would remount the button on every state change.
 function SelectionCancelButton({ onPress }: { onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" testID="selection-cancel" onPress={onPress}>
+    <Pressable
+      accessibilityRole="button"
+      testID="selection-cancel"
+      onPress={onPress}
+    >
       <Text style={styles.headerAction}>Cancelar</Text>
     </Pressable>
   );
@@ -39,7 +57,9 @@ export function GalleryScreen({ navigation }: Props) {
   const removeClip = useRecordingStore(s => s.removeClip);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(
+    null,
+  );
   const { width } = useWindowDimensions();
 
   const selectionMode = selectedIds.size > 0;
@@ -69,13 +89,21 @@ export function GalleryScreen({ navigation }: Props) {
   useLayoutEffect(() => {
     if (selectionMode) {
       navigation.setOptions({
-        title: selectedIds.size === 1 ? '1 selecionado' : `${selectedIds.size} selecionados`,
+        title:
+          selectedIds.size === 1
+            ? '1 selecionado'
+            : `${selectedIds.size} selecionados`,
         headerLeft: renderSelectionCancelButton,
       });
     } else {
       navigation.setOptions({ title: 'Galeria', headerLeft: undefined });
     }
-  }, [navigation, selectionMode, selectedIds.size, renderSelectionCancelButton]);
+  }, [
+    navigation,
+    selectionMode,
+    selectedIds.size,
+    renderSelectionCancelButton,
+  ]);
 
   const handleLongPress = useCallback((clip: SavedClip) => {
     setSelectedIds(prev => new Set(prev).add(clip.id));
@@ -100,7 +128,10 @@ export function GalleryScreen({ navigation }: Props) {
     [selectionMode, navigation],
   );
 
-  const selectedClips = useMemo(() => clips.filter(c => selectedIds.has(c.id)), [clips, selectedIds]);
+  const selectedClips = useMemo(
+    () => clips.filter(c => selectedIds.has(c.id)),
+    [clips, selectedIds],
+  );
 
   const handleShareSelected = useCallback(() => {
     const count = selectedClips.length;
@@ -125,7 +156,10 @@ export function GalleryScreen({ navigation }: Props) {
     setSelectedIds(new Set());
   }, [pendingDeleteIds, clips, removeClip]);
 
-  const listItems = useMemo(() => buildGalleryListItems(clips, numColumns), [clips, numColumns]);
+  const listItems = useMemo(
+    () => buildGalleryListItems(clips, numColumns),
+    [clips, numColumns],
+  );
 
   const renderItem = useCallback(
     ({ item }: { item: GalleryListItem }) => {
@@ -154,7 +188,9 @@ export function GalleryScreen({ navigation }: Props) {
   return (
     <View style={styles.container} testID="gallery-screen">
       {!loading && clips.length === 0 ? (
-        <GalleryEmptyState onBackToCamera={() => navigation.navigate('Camera')} />
+        <GalleryEmptyState
+          onBackToCamera={() => navigation.navigate('Camera')}
+        />
       ) : (
         <FlatList
           data={listItems}
@@ -172,7 +208,11 @@ export function GalleryScreen({ navigation }: Props) {
       )}
 
       {selectionMode && (
-        <SelectionToolbar count={selectedIds.size} onShare={handleShareSelected} onDelete={handleDeleteSelected} />
+        <SelectionToolbar
+          count={selectedIds.size}
+          onShare={handleShareSelected}
+          onDelete={handleDeleteSelected}
+        />
       )}
 
       <DeleteConfirmModal
@@ -184,10 +224,3 @@ export function GalleryScreen({ navigation }: Props) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.backgroundDark },
-  sectionHeader: { ...typography.bodyStrong, color: colors.textDark, paddingHorizontal: 8, paddingTop: 16, paddingBottom: 8 },
-  row: { flexDirection: 'row' },
-  headerAction: { ...typography.bodyStrong, color: colors.accent, paddingHorizontal: 8 },
-});
