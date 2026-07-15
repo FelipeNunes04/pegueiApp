@@ -50,7 +50,6 @@ export function GalleryPlaceholderIcon({ size = 22, color = 'rgba(255,255,255,0.
   );
 }
 
-/** Back-chevron for the full-screen clip preview's top bar. */
 export function BackArrowIcon({ size = 22, color = '#fff' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -59,7 +58,6 @@ export function BackArrowIcon({ size = 22, color = '#fff' }: IconProps) {
   );
 }
 
-/** Trash-can glyph for the destructive delete action (gallery toolbar + preview). */
 export function TrashIcon({ size = 22, color = '#fff' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -80,7 +78,6 @@ export function ShareIcon({ size = 22, color = '#fff' }: IconProps) {
   );
 }
 
-/** Play triangle for the paused preview-player state. */
 export function PlayIcon({ size = 28, color = '#fff' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -89,7 +86,6 @@ export function PlayIcon({ size = 28, color = '#fff' }: IconProps) {
   );
 }
 
-/** Two-bar pause glyph for the playing preview-player state. */
 export function PauseIcon({ size = 28, color = '#fff' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -99,7 +95,6 @@ export function PauseIcon({ size = 28, color = '#fff' }: IconProps) {
   );
 }
 
-/** Selection-mode checkbox overlay on a grid thumbnail — hollow ring when unselected, filled check when selected. */
 export function SelectionCheckIcon({ size = 20, color = '#fff', selected = false }: IconProps & { selected?: boolean }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">

@@ -8,7 +8,6 @@ interface Props {
   onBackToCamera: () => void;
 }
 
-/** Friendly empty state shown instead of a blank list when there are no saved clips yet. */
 export function GalleryEmptyState({ onBackToCamera }: Props) {
   return (
     <View style={styles.container} testID="gallery-empty">

@@ -30,11 +30,12 @@ export type GalleryListItem =
 
 /**
  * Flattens clips (assumed already sorted newest-first, see listSavedClips)
- * into a single array mixing date-group headers and fixed-width rows of
+ * into a single array mixing date-group headers and rows of up to
  * `numColumns` clips each -- rendered by a single virtualized FlatList
  * rather than a SectionList, since SectionList doesn't support numColumns
- * grid layout directly. The last row of a group is padded with `null`s (not
- * rendered) so its clips stay left-aligned instead of stretching.
+ * grid layout directly. A group's last row may hold fewer than `numColumns`
+ * clips; it's left as-is rather than padded, since the row's own flex
+ * layout already keeps a short row left-aligned.
  */
 export function buildGalleryListItems(clips: SavedClip[], numColumns: number, now: number = Date.now()): GalleryListItem[] {
   const items: GalleryListItem[] = [];
