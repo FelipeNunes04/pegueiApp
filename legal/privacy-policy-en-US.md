@@ -1,6 +1,3 @@
-> ⚠️ **NOTICE — AUTO-GENERATED DRAFT, NOT LEGAL ADVICE.**
-> This document was generated as a starting point and **must be reviewed by a lawyer** before being published to app stores or used with real users. The app processes camera, microphone, and storage data and, for Brazilian users, is subject to the LGPD (Lei Geral de Proteção de Dados), in addition to Apple's (App Store) and Google's (Play Store) own privacy requirements. Fill in the bracketed `[...]` fields before publishing.
-
 # Privacy Policy — Peguei
 
 **Last updated:** [fill in publish date]
