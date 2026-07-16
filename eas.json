@@ -13,9 +13,20 @@
       "distribution": "internal",
       "environment": "preview"
     },
+    "preview-android": {
+      "extends": "preview",
+      "credentialsSource": "local"
+    },
     "production": {
       "autoIncrement": true,
       "environment": "production"
+    },
+    "production-android": {
+      "extends": "production",
+      "credentialsSource": "local",
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {

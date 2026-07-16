@@ -1,12 +1,12 @@
 # Privacy Policy — Peguei
 
-**Last updated:** [fill in publish date]
+**Last updated:** July 16, 2026
 
 This Privacy Policy describes how the **Peguei** app ("the App") handles user information.
 
 ## 1. Who we are
 
-Peguei is developed by [developer/company name]. For privacy questions, contact us at [contact email].
+Peguei is developed by Felipe Nunes. For privacy questions, contact us at felipennunes04@icloud.com.
 
 ## 2. What data the App accesses
 
@@ -65,4 +65,4 @@ We may update this Privacy Policy. If the App ever adds analytics, voice process
 
 ## 9. Contact
 
-Questions about this policy: [contact email].
+Questions about this policy: felipennunes04@icloud.com.

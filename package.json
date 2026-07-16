@@ -20,7 +20,10 @@
     "credentials:ios": "eas credentials --platform ios",
     "build:ios:preview": "eas build --platform ios --profile preview",
     "build:ios": "eas build --platform ios --profile production",
-    "submit:ios": "eas submit --platform ios --latest"
+    "submit:ios": "eas submit --platform ios --latest",
+    "build:android:preview": "eas build --platform android --profile preview-android",
+    "build:android": "eas build --platform android --profile production-android",
+    "submit:android": "eas submit --platform android --latest"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

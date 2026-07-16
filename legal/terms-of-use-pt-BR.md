@@ -3,7 +3,7 @@
 
 # Termos de Uso — Peguei
 
-**Última atualização:** [preencher data de publicação]
+**Última atualização:** 16 de julho de 2026
 
 Ao instalar ou usar o aplicativo **Peguei** ("o App"), você concorda com estes Termos de Uso. Se você não concorda, não instale ou desinstale o App.
 
@@ -36,7 +36,7 @@ O App é fornecido "como está" e "conforme disponível", sem garantias de qualq
 
 ## 7. Limitação de responsabilidade
 
-Na máxima extensão permitida pela lei aplicável, [nome do desenvolvedor/empresa] não será responsável por danos indiretos, incidentais ou consequenciais decorrentes do uso ou da impossibilidade de uso do App, incluindo a perda de um clipe que não pôde ser salvo por qualquer motivo técnico.
+Na máxima extensão permitida pela lei aplicável, Felipe Nunes não será responsável por danos indiretos, incidentais ou consequenciais decorrentes do uso ou da impossibilidade de uso do App, incluindo a perda de um clipe que não pôde ser salvo por qualquer motivo técnico.
 
 ## 8. Nenhuma cobrança nesta versão
 
@@ -56,4 +56,4 @@ Podemos atualizar estes Termos de tempos em tempos. Mudanças relevantes serão 
 
 ## 12. Contato
 
-Dúvidas sobre estes Termos: [e-mail de contato].
+Dúvidas sobre estes Termos: felipennunes04@icloud.com.

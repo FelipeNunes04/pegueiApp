@@ -1,15 +1,12 @@
-> ⚠️ **AVISO — RASCUNHO GERADO AUTOMATICAMENTE, NÃO É ACONSELHAMENTO JURÍDICO.**
-> Este documento foi gerado como ponto de partida e **precisa ser revisado por um advogado** antes de ser publicado nas lojas de aplicativos ou usado com usuários reais. O app processa dados de câmera, microfone e armazenamento, e está sujeito à Lei Geral de Proteção de Dados (LGPD) no Brasil, além dos requisitos próprios de privacidade da Apple (App Store) e do Google (Play Store). Preencha os campos entre colchetes `[...]` antes de publicar.
-
 # Política de Privacidade — Peguei
 
-**Última atualização:** [preencher data de publicação]
+**Última atualização:** 16 de julho de 2026
 
 Esta Política de Privacidade descreve como o aplicativo **Peguei** ("o App") trata as informações dos seus usuários.
 
 ## 1. Quem somos
 
-O Peguei é desenvolvido por [nome do desenvolvedor/empresa]. Para dúvidas sobre privacidade, entre em contato pelo e-mail [e-mail de contato].
+O Peguei é desenvolvido por Felipe Nunes. Para dúvidas sobre privacidade, entre em contato pelo e-mail felipennunes04@icloud.com.
 
 ## 2. Quais dados o App acessa
 
@@ -68,4 +65,4 @@ Podemos atualizar esta Política de Privacidade. Caso o App venha a coletar anal
 
 ## 9. Contato
 
-Dúvidas sobre esta política: [e-mail de contato].
+Dúvidas sobre esta política: felipennunes04@icloud.com.

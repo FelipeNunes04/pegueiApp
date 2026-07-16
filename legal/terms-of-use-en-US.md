@@ -3,7 +3,7 @@
 
 # Terms of Use — Peguei
 
-**Last updated:** [fill in publish date]
+**Last updated:** July 16, 2026
 
 By installing or using the **Peguei** app ("the App"), you agree to these Terms of Use. If you do not agree, do not install, or uninstall, the App.
 
@@ -36,7 +36,7 @@ The App is provided "as is" and "as available," without warranties of any kind, 
 
 ## 7. Limitation of liability
 
-To the maximum extent permitted by applicable law, [developer/company name] will not be liable for indirect, incidental, or consequential damages arising from the use or inability to use the App, including the loss of a clip that could not be saved for any technical reason.
+To the maximum extent permitted by applicable law, Felipe Nunes will not be liable for indirect, incidental, or consequential damages arising from the use or inability to use the App, including the loss of a clip that could not be saved for any technical reason.
 
 ## 8. No charges in this version
 
@@ -48,7 +48,7 @@ You may stop using the App and uninstall it at any time. We may discontinue the 
 
 ## 10. Governing law
 
-These Terms are governed by the laws of [jurisdiction to be defined by the developer/company], without prejudice to any consumer rights provided by local law applicable to you.
+These Terms are governed by the laws of Brazil, without prejudice to any consumer rights provided by local law applicable to you.
 
 ## 11. Changes to these Terms
 
@@ -56,4 +56,4 @@ We may update these Terms from time to time. Material changes will be communicat
 
 ## 12. Contact
 
-Questions about these Terms: [contact email].
+Questions about these Terms: felipennunes04@icloud.com.

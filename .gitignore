@@ -82,3 +82,10 @@ yarn-error.log
 # Firebase Console rather than sharing one committed to a public repo.
 android/app/google-services.json
 ios/**/GoogleService-Info.plist
+
+# Android release signing -- the upload keystore and its passwords. EAS Build
+# reads credentials.json (local credentialsSource) and uploads it together
+# with the keystore for each build invocation; neither should ever be
+# committed.
+credentials.json
+android/keystores/
