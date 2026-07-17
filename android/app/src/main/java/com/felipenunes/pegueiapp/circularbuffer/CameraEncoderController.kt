@@ -2,6 +2,7 @@ package com.felipenunes.pegueiapp.circularbuffer
 
 import android.content.Context
 import android.graphics.Rect
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -86,10 +87,11 @@ object CameraEncoderController {
     private var zoomRatioRange: Range<Float>? = null
     private var maxDigitalZoom: Float = 1f
     private var sensorActiveArraySize: Rect? = null
+    private var targetFpsRange: Range<Int>? = null
 
+    private var previewView: CircularBufferPreviewView? = null
+    private var previewSurfaceTexture: SurfaceTexture? = null
     private var previewSurface: Surface? = null
-    private var previewWidth: Int = 0
-    private var previewHeight: Int = 0
 
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
@@ -148,10 +150,10 @@ object CameraEncoderController {
 
     /** Called by the native preview view once its SurfaceTexture is ready. */
     @Synchronized
-    fun attachPreviewSurface(surface: Surface, width: Int, height: Int) {
+    fun attachPreviewSurface(view: CircularBufferPreviewView, surfaceTexture: SurfaceTexture, surface: Surface, width: Int, height: Int) {
+        previewView = view
+        previewSurfaceTexture = surfaceTexture
         previewSurface = surface
-        previewWidth = width
-        previewHeight = height
         if (pendingConfig != null && !isRunning.get()) {
             openCameraAndStart()
         }
@@ -159,6 +161,8 @@ object CameraEncoderController {
 
     @Synchronized
     fun detachPreviewSurface() {
+        previewView = null
+        previewSurfaceTexture = null
         previewSurface = null
         stopInternal()
     }
@@ -190,6 +194,15 @@ object CameraEncoderController {
             audioRingBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
         }
 
+        // Mirrors Google's Camera2Basic sample: the buffer is requested at
+        // its native (landscape) size -- the same resolution already used
+        // for the encoder, so it's a size the camera is known to support --
+        // and the view's own *measured* box is constrained to the rotated
+        // (portrait) aspect ratio via setAspectRatio, instead of trying to
+        // fix the mismatch with a content Matrix.
+        previewSurfaceTexture?.setDefaultBufferSize(config.width, config.height)
+        previewView?.let { view -> view.post { view.setAspectRatio(config.height, config.width) } }
+
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraId = pickBackCameraId(manager)
         if (cameraId == null) {
@@ -212,6 +225,7 @@ object CameraEncoderController {
         }
         maxDigitalZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
         sensorActiveArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        targetFpsRange = pickTargetFpsRange(characteristics, config.fps)
 
         try {
             encoder = MediaCodec.createEncoderByType(MIME_TYPE)
@@ -297,6 +311,7 @@ object CameraEncoderController {
                 addTarget(preview)
                 addTarget(encInputSurface)
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                targetFpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
             }
             requestBuilder = builder
 
@@ -429,8 +444,18 @@ object CameraEncoderController {
     private fun runAudioEncodeLoop(record: AudioRecord, encoder: MediaCodec) {
         val pcmBuffer = ByteArray(4096)
         val audioStartUs = System.nanoTime() / 1_000L
-        var totalSamplesRead = 0L
+        var totalSamplesEncoded = 0L
         val bufferInfo = MediaCodec.BufferInfo()
+        // Bytes read from AudioRecord but not yet handed to the encoder --
+        // carried across loop iterations so a too-small encoder input
+        // buffer (see below) never causes audio data to be silently
+        // dropped. Previously this was clamped and discarded per read,
+        // which desynced the clip: the clock still advanced by the full
+        // amount read while only part of it was actually encoded, so
+        // clips played back with audio (and, by extension, A/V-synced
+        // playback) running roughly 2x too fast on devices whose AAC
+        // encoder buffer is about half of pcmBuffer's size.
+        var pending = ByteArray(0)
 
         while (isAudioRunning.get()) {
             val bytesRead = try {
@@ -440,19 +465,35 @@ object CameraEncoderController {
             }
             if (bytesRead <= 0) continue
 
-            val presentationTimeUs = audioStartUs + (totalSamplesRead * 1_000_000L / AUDIO_SAMPLE_RATE)
-            totalSamplesRead += bytesRead / 2 // 16-bit mono: 2 bytes/sample
+            val chunk = if (pending.isEmpty()) pcmBuffer.copyOf(bytesRead) else pending + pcmBuffer.copyOf(bytesRead)
+            pending = ByteArray(0)
 
-            val inputIndex = try {
-                encoder.dequeueInputBuffer(AUDIO_OUTPUT_TIMEOUT_US)
-            } catch (t: Throwable) {
-                break
-            }
-            if (inputIndex >= 0) {
+            var offset = 0
+            while (offset < chunk.size) {
+                val inputIndex = try {
+                    encoder.dequeueInputBuffer(AUDIO_OUTPUT_TIMEOUT_US)
+                } catch (t: Throwable) {
+                    offset = chunk.size
+                    break
+                }
+                if (inputIndex < 0) {
+                    // No input buffer free right now -- keep the rest for
+                    // the next iteration instead of spinning or dropping it.
+                    pending = chunk.copyOfRange(offset, chunk.size)
+                    break
+                }
                 val inputBuffer = encoder.getInputBuffer(inputIndex)
                 inputBuffer?.clear()
-                inputBuffer?.put(pcmBuffer, 0, bytesRead)
-                encoder.queueInputBuffer(inputIndex, 0, bytesRead, presentationTimeUs, 0)
+                // Some devices' AAC encoders hand back an input buffer
+                // smaller than pcmBuffer's 4096 bytes; writing more than it
+                // can hold throws BufferOverflowException, so clamp to its
+                // capacity and carry the remainder into the next buffer.
+                val writeSize = minOf(chunk.size - offset, inputBuffer?.remaining() ?: (chunk.size - offset))
+                inputBuffer?.put(chunk, offset, writeSize)
+                val presentationTimeUs = audioStartUs + (totalSamplesEncoded * 1_000_000L / AUDIO_SAMPLE_RATE)
+                encoder.queueInputBuffer(inputIndex, 0, writeSize, presentationTimeUs, 0)
+                totalSamplesEncoded += writeSize / 2 // 16-bit mono: 2 bytes/sample
+                offset += writeSize
             }
 
             drainAudioEncoder(encoder, bufferInfo)
@@ -665,6 +706,30 @@ object CameraEncoderController {
         return applied
     }
 
+    /**
+     * Without a pinned target, auto-exposure is free to lower the frame
+     * rate in dim lighting to keep exposure time up -- a common OEM ISP
+     * behavior (very noticeable on MediaTek chipsets) that leaves the
+     * encoder still assuming `config.fps` throughout, so the saved clip
+     * ends up with real gaps between frame timestamps and plays back as if
+     * it's dropping frames. Pinning a fixed range forces constant frame
+     * delivery, trading noisier low-light frames (via ISO gain) for smooth
+     * playback, which is the right tradeoff for a video-first app.
+     */
+    private fun pickTargetFpsRange(characteristics: CameraCharacteristics, fps: Int): Range<Int>? {
+        val available = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            ?: return null
+        // Prefer the widest range that still caps at `fps`, not the
+        // tightest/exact one: a fixed (fps,fps) range forces the ISP to
+        // hold frame rate even in dim light, which it does by cranking ISO
+        // gain -- visibly grainy footage. A wide floor (e.g. 15-30) lets it
+        // drop to a lower, still-smooth rate and extend exposure instead,
+        // trading a little frame-rate consistency for much cleaner frames.
+        return available.filter { it.upper == fps }.minByOrNull { it.lower }
+            ?: available.filter { it.upper >= fps }.minByOrNull { it.lower }
+            ?: available.maxByOrNull { it.upper }
+    }
+
     private fun cropRegionForZoom(activeArray: Rect, zoom: Float): Rect {
         val centerX = activeArray.width() / 2
         val centerY = activeArray.height() / 2
@@ -687,6 +752,7 @@ object CameraEncoderController {
         zoomRatioRange = null
         maxDigitalZoom = 1f
         sensorActiveArraySize = null
+        targetFpsRange = null
 
         try {
             captureSession?.stopRepeating()

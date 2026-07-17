@@ -1,6 +1,5 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
-import android.os.Environment
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -14,9 +13,13 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
 
     override fun getName(): String = "CircularBufferModule"
 
+    // Must match RNFS.DocumentDirectoryPath + "/PegueiClips" (files.ts CLIPS_DIR),
+    // which is what the JS gallery reads from -- mirrors the iOS module's
+    // documentDirectory/PegueiClips. Previously this pointed at
+    // getExternalFilesDir(Movies), a different directory entirely, so saved
+    // clips never showed up in the app's gallery.
     private fun moviesDir(): File {
-        val dir = reactApplicationContext.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-            ?: File(reactApplicationContext.filesDir, "Movies")
+        val dir = File(reactApplicationContext.filesDir, "PegueiClips")
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
