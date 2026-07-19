@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -6,16 +6,32 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   BUFFER_SECONDS_MAX,
   BUFFER_SECONDS_MIN,
+  VIDEO_FPS_OPTIONS,
   type RootStackParamList,
   type VideoQuality,
 } from '../../shared/types';
 import { useSettingsStore } from './store/settingsStore';
+import { useCameraStore } from '../camera/store/cameraStore';
+import { isFpsSupported, isQualitySupported } from '../../shared/utils/captureCapabilities';
 import { logDonationPixCopied } from '../../shared/utils/analytics';
 import { styles } from './SettingsScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
 const QUALITY_OPTIONS: VideoQuality[] = ['720p', '1080p', '4k'];
+
+// Defined outside SettingsScreen (rather than inline in the headerLeft
+// factory) so react-navigation's header doesn't see a new component type on
+// every render -- mirrors GalleryScreen's SelectionCancelButton. Native-stack
+// has no testID hook for its own default back button, so this exists purely
+// to give e2e (Detox) a stable way to navigate back from Settings.
+function SettingsBackButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" testID="settings-back" onPress={onPress} hitSlop={8}>
+      <Text style={styles.headerBack}>‹</Text>
+    </Pressable>
+  );
+}
 
 // Pix key (e-mail) for optional donations -- e-mail keys don't expose a
 // government ID, unlike a CPF key (see conversation 2026-07-15).
@@ -64,8 +80,33 @@ function DonationSection() {
 export function SettingsScreen({ navigation }: Props) {
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const videoQuality = useSettingsStore(s => s.videoQuality);
+  const fps = useSettingsStore(s => s.fps);
   const setBufferSeconds = useSettingsStore(s => s.setBufferSeconds);
   const setVideoQuality = useSettingsStore(s => s.setVideoQuality);
+  const setFps = useSettingsStore(s => s.setFps);
+
+  const captureCapabilities = useCameraStore(s => s.captureCapabilities);
+  const loadCaptureCapabilities = useCameraStore(s => s.loadCaptureCapabilities);
+
+  useEffect(() => {
+    loadCaptureCapabilities();
+  }, [loadCaptureCapabilities]);
+
+  const unsupportedQualities = QUALITY_OPTIONS.filter(
+    option => !isQualitySupported(captureCapabilities, option),
+  );
+  const unsupportedFps = VIDEO_FPS_OPTIONS.filter(
+    option => !isFpsSupported(captureCapabilities, videoQuality, option),
+  );
+
+  const renderBackButton = useCallback(
+    () => <SettingsBackButton onPress={() => navigation.goBack()} />,
+    [navigation],
+  );
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerLeft: renderBackButton });
+  }, [navigation, renderBackButton]);
 
   return (
     <ScrollView
@@ -90,17 +131,57 @@ export function SettingsScreen({ navigation }: Props) {
 
       <Text style={styles.section}>Qualidade de vídeo</Text>
       <View style={styles.row}>
-        {QUALITY_OPTIONS.map(option => (
-          <Text
-            key={option}
-            testID={`quality-${option}`}
-            onPress={() => setVideoQuality(option)}
-            style={[styles.pill, videoQuality === option && styles.pillActive]}
-          >
-            {option}
-          </Text>
-        ))}
+        {QUALITY_OPTIONS.map(option => {
+          const supported = isQualitySupported(captureCapabilities, option);
+          return (
+            <Text
+              key={option}
+              testID={`quality-${option}`}
+              onPress={supported ? () => setVideoQuality(option) : undefined}
+              accessibilityState={{ disabled: !supported, selected: videoQuality === option }}
+              style={[
+                styles.pill,
+                videoQuality === option && styles.pillActive,
+                !supported && styles.pillDisabled,
+              ]}
+            >
+              {option}
+            </Text>
+          );
+        })}
       </View>
+      {unsupportedQualities.length > 0 && (
+        <Text style={styles.sectionHint} testID="quality-unsupported-hint">
+          Indisponível neste aparelho: {unsupportedQualities.join(', ')}.
+        </Text>
+      )}
+
+      <Text style={styles.section}>Taxa de quadros (FPS)</Text>
+      <View style={styles.row}>
+        {VIDEO_FPS_OPTIONS.map(option => {
+          const supported = isFpsSupported(captureCapabilities, videoQuality, option);
+          return (
+            <Text
+              key={option}
+              testID={`fps-${option}`}
+              onPress={supported ? () => setFps(option) : undefined}
+              accessibilityState={{ disabled: !supported, selected: fps === option }}
+              style={[
+                styles.pill,
+                fps === option && styles.pillActive,
+                !supported && styles.pillDisabled,
+              ]}
+            >
+              {option}
+            </Text>
+          );
+        })}
+      </View>
+      {unsupportedFps.length > 0 && (
+        <Text style={styles.sectionHint} testID="fps-unsupported-hint">
+          Indisponível em {videoQuality} neste aparelho: {unsupportedFps.join(', ')}.
+        </Text>
+      )}
 
       <DonationSection />
 

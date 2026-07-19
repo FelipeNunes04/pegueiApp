@@ -3,6 +3,7 @@ import { colors } from '../../shared/theme/colors';
 import { typography } from '../../shared/theme/typography';
 
 export const styles = StyleSheet.create({
+  headerBack: { ...typography.title, color: colors.textDark, paddingHorizontal: 12, paddingVertical: 4 },
   container: { flex: 1, backgroundColor: colors.backgroundDark },
   content: { padding: 20, paddingBottom: 60 },
   section: { ...typography.title, fontSize: 16, color: colors.textDark, marginTop: 20, marginBottom: 4 },
@@ -21,6 +22,7 @@ export const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   pillActive: { backgroundColor: colors.accent, color: colors.textLight },
+  pillDisabled: { opacity: 0.35 },
   pixBox: {
     backgroundColor: colors.surfaceDark,
     borderRadius: 12,

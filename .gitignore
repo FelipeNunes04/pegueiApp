@@ -89,3 +89,7 @@ ios/**/GoogleService-Info.plist
 # committed.
 credentials.json
 android/keystores/
+
+# Google Play service account key -- grants EAS Submit release-management
+# access to the Play Console app; never commit.
+google-play-service-account.json

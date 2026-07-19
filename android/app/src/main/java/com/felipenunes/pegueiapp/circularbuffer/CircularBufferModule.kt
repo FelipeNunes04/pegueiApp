@@ -1,10 +1,12 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
+import android.view.WindowManager
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableNativeArray
 import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.File
@@ -31,6 +33,24 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
      * useCircularBuffer.ts subscribes via circularBufferEvents and routes
      * this into the same error banner as a rejected saveClip().
      */
+    // Continuous recording is pointless if the OS turns the screen off (and,
+    // on Android, eventually backgrounds/suspends the app) a few seconds
+    // into an unattended/mounted recording session -- addFlags/clearFlags
+    // must run on the UI thread, and currentActivity can legitimately be
+    // null (e.g. torn down mid-backgrounding), so this is a best-effort,
+    // silently-skip-if-unavailable call, not something worth failing
+    // startBuffering/stopBuffering over.
+    private fun setKeepScreenOn(enabled: Boolean) {
+        val activity = reactApplicationContext.currentActivity ?: return
+        activity.runOnUiThread {
+            if (enabled) {
+                activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
     private fun emitError(code: String, message: String) {
         val params = WritableNativeMap()
         params.putString("code", code)
@@ -60,6 +80,7 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                     }
                 },
             )
+            setKeepScreenOn(true)
             promise.resolve(null)
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.ENCODER_INIT_FAILED, t.message, t)
@@ -79,6 +100,7 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
     fun stopBuffering(promise: Promise) {
         try {
             CameraEncoderController.stop()
+            setKeepScreenOn(false)
             promise.resolve(null)
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.SAVE_FAILED, t.message, t)
@@ -146,5 +168,31 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
         result.putDouble("maxZoom", info.maxZoom)
         result.putBoolean("hasUltraWide", info.hasUltraWide)
         promise.resolve(result)
+    }
+
+    // Queried once by SettingsScreen (and defensively by useCircularBuffer
+    // before starting the buffer) so quality/fps options the hardware
+    // doesn't actually support are disabled/clamped instead of silently
+    // ignored or failing to start. Reads CameraCharacteristics directly, so
+    // this can run standalone without a running buffer.
+    @ReactMethod
+    fun getCaptureCapabilities(promise: Promise) {
+        try {
+            val capabilities = CameraEncoderController.captureCapabilities(reactApplicationContext)
+            val result = WritableNativeMap()
+            val qualities = WritableNativeArray()
+            capabilities.supportedQualities.forEach { qualities.pushString(it) }
+            result.putArray("supportedQualities", qualities)
+            val fpsByQuality = WritableNativeMap()
+            capabilities.fpsByQuality.forEach { (quality, fpsList) ->
+                val fpsArray = WritableNativeArray()
+                fpsList.forEach { fpsArray.pushInt(it) }
+                fpsByQuality.putArray(quality, fpsArray)
+            }
+            result.putMap("fpsByQuality", fpsByQuality)
+            promise.resolve(result)
+        } catch (t: Throwable) {
+            promise.reject(CircularBufferErrorCodes.ENCODER_INIT_FAILED, t.message, t)
+        }
     }
 }

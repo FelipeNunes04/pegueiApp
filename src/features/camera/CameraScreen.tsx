@@ -32,13 +32,22 @@ export function CameraScreen({ navigation }: Props) {
   const { zoomFactor, pillLevels, setZoom } = useZoom(phase);
   const pinchHandlers = usePinchToZoom(zoomFactor, setZoom);
 
+  // start/stop's identity changes whenever bufferSeconds/videoQuality/fps
+  // changes (see useCircularBuffer's doc comment), so this intentionally
+  // re-runs -- tearing down and reopening the native buffer with the new
+  // config -- any time a setting changes while this screen stays mounted in
+  // the background (e.g. the user tweaks a slider on SettingsScreen and taps
+  // back). Previously this effect had an empty dependency array, so it only
+  // ever applied whatever settings were current at the very first mount --
+  // React Navigation's native-stack keeps CameraScreen mounted underneath
+  // Settings rather than unmounting it, so settings changes silently never
+  // reached the running buffer.
   useEffect(() => {
     start();
     return () => {
       stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [start, stop]);
 
   // Refreshes the shared clip list so the gallery button's thumbnail reflects
   // the most recent save, including clips saved in a previous app session.

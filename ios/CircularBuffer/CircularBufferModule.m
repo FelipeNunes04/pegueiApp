@@ -25,4 +25,7 @@ RCT_EXTERN_METHOD(setZoom:(nonnull NSNumber *)factor
 RCT_EXTERN_METHOD(getZoomInfo:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(getCaptureCapabilities:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

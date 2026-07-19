@@ -1,5 +1,5 @@
 import { NativeEventEmitter, NativeModules, Platform, requireNativeComponent, type ViewProps } from 'react-native';
-import type { BufferConfig, SaveClipResult } from '../../../shared/types';
+import type { BufferConfig, CaptureCapabilities, SaveClipResult } from '../../../shared/types';
 
 export interface ZoomInfo {
   minZoom: number;
@@ -17,6 +17,7 @@ interface CircularBufferNativeInterface {
   /** Returns the zoom factor actually applied (clamped to the device's supported range). */
   setZoom(factor: number): Promise<number>;
   getZoomInfo(): Promise<ZoomInfo>;
+  getCaptureCapabilities(): Promise<CaptureCapabilities>;
 }
 
 const LINKING_ERROR =
@@ -42,6 +43,7 @@ export const CircularBufferModule: CircularBufferNativeInterface = {
   isBuffering: () => assertLinked().isBuffering(),
   setZoom: factor => assertLinked().setZoom(factor),
   getZoomInfo: () => assertLinked().getZoomInfo(),
+  getCaptureCapabilities: () => assertLinked().getCaptureCapabilities(),
 };
 
 export const circularBufferEvents = NativeCircularBuffer

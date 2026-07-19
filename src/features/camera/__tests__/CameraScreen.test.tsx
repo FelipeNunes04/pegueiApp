@@ -93,6 +93,36 @@ describe('CameraScreen', () => {
     expect(stopRecording).toHaveBeenCalled();
   });
 
+  // Regression test for the bug where a settings change (buffer seconds,
+  // quality, fps) made on SettingsScreen had no effect on an already-running
+  // buffer: React Navigation's native-stack keeps CameraScreen mounted
+  // underneath Settings, so its start()/stop() effect only re-applies a
+  // config change if it depends on the hook's start/stop identities (which
+  // useCircularBuffer changes whenever the underlying settings change) --
+  // not on an empty array. Simulating a settings change here as a new
+  // start/stop identity (independent of useCircularBuffer's own internals,
+  // covered separately in useCircularBuffer.test.ts) isolates CameraScreen's
+  // half of that contract.
+  it('tears down the old buffer and starts a new one when start/stop identity changes (e.g. after a settings change)', async () => {
+    const firstStart = jest.fn();
+    const firstStop = jest.fn();
+    mockedUseCircularBuffer.mockReturnValue(baseCircularBuffer({ start: firstStart, stop: firstStop }));
+
+    const { rerender } = await render(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+    expect(firstStart).toHaveBeenCalledTimes(1);
+
+    const secondStart = jest.fn();
+    const secondStop = jest.fn();
+    mockedUseCircularBuffer.mockReturnValue(baseCircularBuffer({ start: secondStart, stop: secondStop }));
+
+    await act(async () => {
+      rerender(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+    });
+
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    expect(secondStart).toHaveBeenCalledTimes(1);
+  });
+
   it('navigates to Gallery and Settings from the top bar', async () => {
     mockedUseCircularBuffer.mockReturnValue(baseCircularBuffer());
 

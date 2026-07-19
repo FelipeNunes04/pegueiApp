@@ -20,12 +20,31 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Range
+import android.util.Size
 import android.view.Surface
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class BufferConfig(val bufferSeconds: Int, val width: Int, val height: Int, val fps: Int)
+
+/** Plain (lower, upper) pair mirroring `android.util.Range<Int>` without the Android SDK
+ *  dependency -- see `pickTargetFpsRange`'s doc comment for why. */
+internal data class FpsRange(val lower: Int, val upper: Int)
+
+data class CaptureCapabilities(val supportedQualities: List<String>, val fpsByQuality: Map<String, List<Int>>)
+
+/** The (width, height) pixel dimensions for each quality preset, mirrored from
+ *  VIDEO_QUALITY_PRESETS in shared/types/index.ts -- capability-checking happens
+ *  entirely native-side, before any BufferConfig is ever built. */
+private val QUALITY_PRESET_SIZES = listOf(
+    Triple("720p", 1280, 720),
+    Triple("1080p", 1920, 1080),
+    Triple("4k", 3840, 2160),
+)
+
+/** Mirrors VIDEO_FPS_OPTIONS in shared/types/index.ts. */
+private val CANDIDATE_FPS_OPTIONS = listOf(24, 30, 60)
 
 data class ZoomInfo(val minZoom: Double, val maxZoom: Double, val hasUltraWide: Boolean)
 
@@ -719,12 +738,27 @@ object CameraEncoderController {
     private fun pickTargetFpsRange(characteristics: CameraCharacteristics, fps: Int): Range<Int>? {
         val available = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
             ?: return null
-        // Prefer the widest range that still caps at `fps`, not the
-        // tightest/exact one: a fixed (fps,fps) range forces the ISP to
-        // hold frame rate even in dim light, which it does by cranking ISO
-        // gain -- visibly grainy footage. A wide floor (e.g. 15-30) lets it
-        // drop to a lower, still-smooth rate and extend exposure instead,
-        // trading a little frame-rate consistency for much cleaner frames.
+        val picked = pickTargetFpsRange(available.map { FpsRange(it.lower, it.upper) }, fps) ?: return null
+        return Range(picked.lower, picked.upper)
+    }
+
+    /**
+     * Prefers the widest range that still caps at `fps`, not the
+     * tightest/exact one: a fixed (fps,fps) range forces the ISP to hold
+     * frame rate even in dim light, which it does by cranking ISO gain --
+     * visibly grainy footage. A wide floor (e.g. 15-30) lets it drop to a
+     * lower, still-smooth rate and extend exposure instead, trading a
+     * little frame-rate consistency for much cleaner frames.
+     *
+     * Split out from the `CameraCharacteristics`-reading overload above and
+     * expressed over the plain `FpsRange` (not `android.util.Range`) so this
+     * decision logic is testable in a plain JUnit test: this project's unit
+     * tests run against the unmocked Android SDK stub (no Robolectric),
+     * which throws at runtime for any `android.util.*` call, `Range`
+     * included -- mirrors why `FrameRingBuffer` itself is kept
+     * Android-SDK-free. See PickTargetFpsRangeTest.kt.
+     */
+    internal fun pickTargetFpsRange(available: List<FpsRange>, fps: Int): FpsRange? {
         return available.filter { it.upper == fps }.minByOrNull { it.lower }
             ?: available.filter { it.upper >= fps }.minByOrNull { it.lower }
             ?: available.maxByOrNull { it.upper }
@@ -833,6 +867,47 @@ object CameraEncoderController {
             }
         }
         return manager.cameraIdList.firstOrNull()
+    }
+
+    /**
+     * Reports which quality presets this device's back camera actually
+     * offers, and which of CANDIDATE_FPS_OPTIONS each of those qualities can
+     * run at -- SettingsScreen uses this to disable/hide options the
+     * hardware can't deliver instead of letting the user pick "4K" or
+     * "60fps" on a device that can't actually produce it (pre-fix, such a
+     * setting was simply ignored). Returns everything unsupported (empty
+     * lists) if there's no back camera or no stream configuration data at
+     * all, rather than throwing -- the JS side treats an empty capabilities
+     * response as "couldn't determine, don't restrict anything".
+     */
+    fun captureCapabilities(context: Context): CaptureCapabilities {
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = pickBackCameraId(manager) ?: return CaptureCapabilities(emptyList(), emptyMap())
+        val characteristics = manager.getCameraCharacteristics(cameraId)
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?: return CaptureCapabilities(emptyList(), emptyMap())
+        val fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            ?.map { FpsRange(it.lower, it.upper) } ?: emptyList()
+        val outputSizes = map.getOutputSizes(SurfaceTexture::class.java)?.toList() ?: emptyList()
+
+        val supportedQualities = mutableListOf<String>()
+        val fpsByQuality = mutableMapOf<String, List<Int>>()
+        for ((quality, width, height) in QUALITY_PRESET_SIZES) {
+            if (outputSizes.none { it.width == width && it.height == height }) continue
+            supportedQualities.add(quality)
+
+            // getOutputMinFrameDuration reports how fast this exact size can
+            // actually be streamed (0 means "no data" on some devices, not
+            // "zero duration") -- a candidate fps must fit under that cap
+            // *and* fall inside one of the AE-exposed target ranges, mirroring
+            // pickTargetFpsRange's own real-world constraint.
+            val minDurationNs = map.getOutputMinFrameDuration(SurfaceTexture::class.java, Size(width, height))
+            val maxFpsAtSize = if (minDurationNs > 0) 1_000_000_000.0 / minDurationNs else Double.MAX_VALUE
+            fpsByQuality[quality] = CANDIDATE_FPS_OPTIONS.filter { candidate ->
+                candidate <= maxFpsAtSize && fpsRanges.any { candidate >= it.lower && candidate <= it.upper }
+            }
+        }
+        return CaptureCapabilities(supportedQualities, fpsByQuality)
     }
 
     private fun estimateBitRate(config: BufferConfig): Int {

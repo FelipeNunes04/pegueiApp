@@ -10,6 +10,24 @@ struct BufferConfig {
     let fps: Int
 }
 
+/// The (width, height) pixel dimensions for each quality preset, mirrored
+/// from VIDEO_QUALITY_PRESETS in shared/types/index.ts -- kept here (not
+/// read from JS) since capability-checking happens entirely native-side,
+/// before any BufferConfig is ever built.
+let QUALITY_PRESET_SIZES: [(quality: String, width: Int, height: Int)] = [
+    ("720p", 1280, 720),
+    ("1080p", 1920, 1080),
+    ("4k", 3840, 2160),
+]
+
+/// Mirrors VIDEO_FPS_OPTIONS in shared/types/index.ts.
+let CANDIDATE_FPS_OPTIONS = [24, 30, 60]
+
+struct CaptureCapabilities {
+    let supportedQualities: [String]
+    let fpsByQuality: [String: [Int]]
+}
+
 protocol CameraEncoderControllerDelegate: AnyObject {
     func cameraEncoderController(_ controller: CameraEncoderController, didFailWithCode code: String, message: String)
 }
@@ -55,6 +73,13 @@ final class CameraEncoderController: NSObject {
     private var activeDevice: AVCaptureDevice?
     private let deviceLock = NSLock()
 
+    // The fps actually applied to the current session (set alongside
+    // activeFormat in openCameraAndStart), snapshotted into PendingSave at
+    // startManualRecording time so finalizeSave stamps the clip's per-frame
+    // duration metadata with the real capture rate instead of an assumed
+    // constant.
+    private var activeFps: Int = 30
+
     /// A manual recording in flight: `headFrames` is the pre-roll snapshot
     /// taken from the ring buffer the moment recording started; `tailFrames`
     /// keeps accumulating every frame the encoder produces for as long as
@@ -66,6 +91,7 @@ final class CameraEncoderController: NSObject {
         let audioHeadFrames: [AudioSampleFrame]
         var audioTailFrames: [AudioSampleFrame] = []
         let outputURL: URL
+        let fps: Int
     }
 
     private var pendingSave: PendingSave?
@@ -218,6 +244,41 @@ final class CameraEncoderController: NSObject {
                 self.activeDevice = device
                 self.deviceLock.unlock()
 
+                // Picking an explicit AVCaptureDevice.Format (rather than
+                // leaving the session on a fixed preset) is what actually
+                // makes the "4K/1080p/720p" quality setting take effect: a
+                // hardcoded `sessionPreset = .high` previously meant every
+                // quality setting captured frames at whatever resolution
+                // `.high` happened to map to on the device, while only the
+                // encoder's *declared* dimensions changed -- never a real
+                // resolution change. `.inputPriority` tells the session to
+                // respect the device's activeFormat instead of silently
+                // overriding it.
+                guard let format = Self.pickFormat(for: device, width: config.width, height: config.height, fps: config.fps) else {
+                    self.session.commitConfiguration()
+                    self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Resolução \(config.width)x\(config.height) não suportada por esta câmera.")
+                    return
+                }
+                try device.lockForConfiguration()
+                device.activeFormat = format
+                if let range = format.videoSupportedFrameRateRanges.first(where: { Double(config.fps) >= $0.minFrameRate && Double(config.fps) <= $0.maxFrameRate }) {
+                    let duration = CMTimeMake(value: 1, timescale: Int32(config.fps))
+                    device.activeVideoMinFrameDuration = duration
+                    device.activeVideoMaxFrameDuration = duration
+                }
+                // No supported range covering the requested fps at this
+                // resolution shouldn't normally happen since pickFormat
+                // already filters for this -- if it does, the device's
+                // default frame duration for this format is left as-is,
+                // but activeFps still records what was requested since
+                // that's what finalizeSave stamps the clip's per-frame
+                // duration metadata with.
+                device.unlockForConfiguration()
+                self.stateLock.lock()
+                self.activeFps = config.fps
+                self.stateLock.unlock()
+                self.session.sessionPreset = .inputPriority
+
                 self.videoDataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
                 self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
                 self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataOutputQueue)
@@ -227,7 +288,6 @@ final class CameraEncoderController: NSObject {
                     return
                 }
                 self.session.addOutput(self.videoDataOutput)
-                self.session.sessionPreset = .high
 
                 // Audio is best-effort: if no mic is available or it can't be
                 // attached, the video-only path above has already succeeded,
@@ -299,6 +359,74 @@ final class CameraEncoderController: NSObject {
             }
         }
         return nil
+    }
+
+    /// Finds a device format whose pixel dimensions match the requested
+    /// width/height exactly and whose supported frame-rate range covers the
+    /// requested fps. Falls back to the resolution match with the highest
+    /// available max frame rate if none exactly covers the requested fps
+    /// (e.g. 60fps requested at a resolution this device only encodes up to
+    /// 30fps) -- returning nil only when the resolution itself isn't
+    /// offered at all by this device.
+    ///
+    /// This exact selection algorithm (candidates -> exact-fps match ->
+    /// widest-max-fps fallback) is mirrored by FormatSelectionTests.swift
+    /// against plain synthetic data, the same way SaveClipDurationTests.swift
+    /// mirrors finalizeSave()'s duration math -- AVCaptureDevice.Format and
+    /// AVFrameRateRange have no public initializers and CameraEncoderController.swift
+    /// isn't part of the PegueiTests target (it pulls in AVFoundation/
+    /// VideoToolbox device APIs that need real hardware), so this can't be
+    /// exercised directly from a plain XCTest logic test.
+    private static func pickFormat(for device: AVCaptureDevice, width: Int, height: Int, fps: Int) -> AVCaptureDevice.Format? {
+        let candidates = device.formats.filter { format in
+            let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return Int(dims.width) == width && Int(dims.height) == height
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        let requestedFps = Double(fps)
+        if let exact = candidates.first(where: { format in
+            format.videoSupportedFrameRateRanges.contains { requestedFps >= $0.minFrameRate && requestedFps <= $0.maxFrameRate }
+        }) {
+            return exact
+        }
+        return candidates.max { a, b in
+            (a.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0) < (b.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0)
+        }
+    }
+
+    /// Reports which quality presets this device's back camera actually
+    /// offers, and which of CANDIDATE_FPS_OPTIONS each of those qualities
+    /// can run at -- SettingsScreen uses this to disable/hide options the
+    /// hardware can't deliver instead of letting the user pick "4K" or
+    /// "60fps" on a device that silently falls back to something else (or,
+    /// pre-fix, ignored the setting outright). Returns every quality
+    /// unsupported (empty arrays) if there's no back camera at all (e.g. a
+    /// Simulator) rather than throwing -- the JS side treats an empty
+    /// capabilities response as "couldn't determine, don't restrict
+    /// anything" (see cameraStore.ts).
+    func captureCapabilities() -> CaptureCapabilities {
+        guard let device = Self.pickBackCameraDevice() else {
+            return CaptureCapabilities(supportedQualities: [], fpsByQuality: [:])
+        }
+
+        var supportedQualities: [String] = []
+        var fpsByQuality: [String: [Int]] = [:]
+        for preset in QUALITY_PRESET_SIZES {
+            let matches = device.formats.filter { format in
+                let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                return Int(dims.width) == preset.width && Int(dims.height) == preset.height
+            }
+            guard !matches.isEmpty else { continue }
+            supportedQualities.append(preset.quality)
+            fpsByQuality[preset.quality] = CANDIDATE_FPS_OPTIONS.filter { candidate in
+                let requested = Double(candidate)
+                return matches.contains { format in
+                    format.videoSupportedFrameRateRanges.contains { requested >= $0.minFrameRate && requested <= $0.maxFrameRate }
+                }
+            }
+        }
+        return CaptureCapabilities(supportedQualities: supportedQualities, fpsByQuality: fpsByQuality)
     }
 
     /// AVFoundation's `videoZoomFactor` is an internal, **device-relative**
@@ -511,6 +639,7 @@ final class CameraEncoderController: NSObject {
             onFailed(CircularBufferErrorCode.saveFailed, "Já existe uma gravação em andamento.")
             return
         }
+        let capturedFps = activeFps
         stateLock.unlock()
 
         do {
@@ -532,7 +661,7 @@ final class CameraEncoderController: NSObject {
         let outputURL = moviesDir.appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970 * 1000)).mp4")
 
         stateLock.lock()
-        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL)
+        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL, fps: capturedFps)
         stateLock.unlock()
         onStarted()
     }
@@ -645,7 +774,7 @@ final class CameraEncoderController: NSObject {
                         }
                         let frame = videoFrames[videoIndex]
                         videoIndex += 1
-                        guard let sampleBuffer = Self.makeSampleBuffer(frame: frame, formatDescription: formatDescription, startUs: startUs, fps: 30) else {
+                        guard let sampleBuffer = Self.makeSampleBuffer(frame: frame, formatDescription: formatDescription, startUs: startUs, fps: save.fps) else {
                             continue
                         }
                         if !videoInput.append(sampleBuffer) {

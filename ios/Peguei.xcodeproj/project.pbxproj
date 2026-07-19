@@ -11,6 +11,7 @@
 		0C80B921A6F3F58F76C31292 /* libPods-Peguei.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-Peguei.a */; };
 		0D6E7C96F7DAB96A30285DD3 /* CircularBufferModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AD7476C02FDE5003DCEBDA /* CircularBufferModule.swift */; };
 		0D8648DC3065E34C48DA6FB5 /* FrameRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC22AF546F198129A2A825F /* FrameRingBufferTests.swift */; };
+		EF43E9A7FF1105842D164E10 /* FormatSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFE4E7E1CD40731C6D797FC2 /* FormatSelectionTests.swift */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		219903FB08176E1E77BB3B07 /* EncodedFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C30E364D82CD91614748194 /* EncodedFrame.swift */; };
 		21B76AE39B019F30FDD3EE94 /* CircularBufferModule.m in Sources */ = {isa = PBXBuildFile; fileRef = 36AF6447750DB878B3F31E9E /* CircularBufferModule.m */; };
@@ -44,6 +45,7 @@
 		3C2B5744229E2AB26569E9CB /* CircularBufferPreviewView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CircularBufferPreviewView.swift; sourceTree = "<group>"; };
 		3C30E364D82CD91614748194 /* EncodedFrame.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EncodedFrame.swift; sourceTree = "<group>"; };
 		3DC22AF546F198129A2A825F /* FrameRingBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FrameRingBufferTests.swift; sourceTree = "<group>"; };
+		BFE4E7E1CD40731C6D797FC2 /* FormatSelectionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FormatSelectionTests.swift; sourceTree = "<group>"; };
 		3FA31C1B4569D8290DE0B403 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		4588A7A14C778BB3A23EA072 /* CameraEncoderController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CameraEncoderController.swift; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-Peguei.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Peguei.release.xcconfig"; path = "Target Support Files/Pods-Peguei/Pods-Peguei.release.xcconfig"; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 			children = (
 				3DC22AF546F198129A2A825F /* FrameRingBufferTests.swift */,
 				A03A78A8BD99CE2DC12F656E /* SaveClipDurationTests.swift */,
+				BFE4E7E1CD40731C6D797FC2 /* FormatSelectionTests.swift */,
 			);
 			name = PegueiTests;
 			path = PegueiTests;
@@ -392,6 +395,7 @@
 				4773680B1659C467767D84B1 /* FrameRingBuffer.swift in Sources */,
 				219903FB08176E1E77BB3B07 /* EncodedFrame.swift in Sources */,
 				F2C55436AE4634557F3B16E8 /* SaveClipDurationTests.swift in Sources */,
+				EF43E9A7FF1105842D164E10 /* FormatSelectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import RNFS from 'react-native-fs';
 import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEvent } from '../native/CircularBufferModule';
+import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
 import { encodeClipFilename } from '../../../shared/utils/files';
 import { logClipSaved } from '../../../shared/utils/analytics';
+import { resolveSupportedFps, resolveSupportedQuality } from '../../../shared/utils/captureCapabilities';
 import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
 
 /**
@@ -15,10 +17,21 @@ import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
  * keeps recording, not a fixed post-roll), stop finalizes it into a saved
  * clip that concatenates the pre-roll buffer with the manually recorded
  * segment. See DECISIONS.md.
+ *
+ * start/stop are useCallbacks keyed on bufferSeconds/videoQuality/fps, so
+ * their identity changes whenever a setting changes -- CameraScreen's effect
+ * depends on [start, stop], not [], specifically so a settings change while
+ * the buffer is already running tears it down and reopens it with the new
+ * config instead of silently continuing with whatever was configured at the
+ * very first mount.
  */
 export function useCircularBuffer() {
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const videoQuality = useSettingsStore(s => s.videoQuality);
+  const fps = useSettingsStore(s => s.fps);
+  const setVideoQuality = useSettingsStore(s => s.setVideoQuality);
+  const setFps = useSettingsStore(s => s.setFps);
+  const loadCaptureCapabilities = useCameraStore(s => s.loadCaptureCapabilities);
   const phase = useRecordingStore(s => s.phase);
   const setPhase = useRecordingStore(s => s.setPhase);
   const setError = useRecordingStore(s => s.setError);
@@ -50,13 +63,28 @@ export function useCircularBuffer() {
   }, [setError]);
 
   const start = useCallback(async () => {
-    const preset = VIDEO_QUALITY_PRESETS[videoQuality];
     try {
+      // Guards against a persisted quality/fps the device can't actually
+      // deliver (e.g. settings restored from a more capable phone's
+      // backup) -- resolves to the nearest supported option instead of
+      // asking the native buffer for something it will fail or silently
+      // downgrade. When this actually corrects something, updating
+      // settingsStore changes this callback's own identity again (see its
+      // deps below), which re-triggers CameraScreen's effect for one extra
+      // harmless start/stop cycle -- the buffer already started correctly
+      // with the resolved values on *this* call either way.
+      const capabilities = await loadCaptureCapabilities();
+      const resolvedQuality = resolveSupportedQuality(capabilities, videoQuality);
+      const resolvedFps = resolveSupportedFps(capabilities, resolvedQuality, fps);
+      if (resolvedQuality !== videoQuality) setVideoQuality(resolvedQuality);
+      if (resolvedFps !== fps) setFps(resolvedFps);
+
+      const preset = VIDEO_QUALITY_PRESETS[resolvedQuality];
       await CircularBufferModule.startBuffering({
         bufferSeconds,
         width: preset.width,
         height: preset.height,
-        fps: preset.fps,
+        fps: resolvedFps,
       });
       if (isMountedRef.current) {
         setPhase('buffering');
@@ -66,7 +94,7 @@ export function useCircularBuffer() {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
     }
-  }, [bufferSeconds, videoQuality, setPhase, setError]);
+  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError]);
 
   const stop = useCallback(async () => {
     try {

@@ -1,7 +1,18 @@
 import { useCameraStore } from '../store/cameraStore';
+import { CircularBufferModule } from '../native/CircularBufferModule';
+import type { CaptureCapabilities } from '../../../shared/types';
+
+jest.mock('../native/CircularBufferModule', () => ({
+  CircularBufferModule: {
+    getCaptureCapabilities: jest.fn(),
+  },
+}));
+
+const mockedModule = CircularBufferModule as jest.Mocked<typeof CircularBufferModule>;
 
 describe('cameraStore', () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     useCameraStore.getState().reset();
   });
 
@@ -60,6 +71,63 @@ describe('cameraStore', () => {
       maxZoom: null,
       hasUltraWide: false,
       zoomFactor: 1,
+    });
+  });
+
+  describe('loadCaptureCapabilities', () => {
+    it('stores the result of the native query', async () => {
+      mockedModule.getCaptureCapabilities.mockResolvedValue({
+        supportedQualities: ['720p', '1080p'],
+        fpsByQuality: { '720p': [24, 30], '1080p': [24, 30] },
+      });
+
+      const result = await useCameraStore.getState().loadCaptureCapabilities();
+
+      expect(result).toEqual({ supportedQualities: ['720p', '1080p'], fpsByQuality: { '720p': [24, 30], '1080p': [24, 30] } });
+      expect(useCameraStore.getState().captureCapabilities).toEqual(result);
+    });
+
+    it('caches the result -- a second call does not hit the native bridge again', async () => {
+      mockedModule.getCaptureCapabilities.mockResolvedValue({ supportedQualities: ['4k'], fpsByQuality: {} });
+
+      await useCameraStore.getState().loadCaptureCapabilities();
+      await useCameraStore.getState().loadCaptureCapabilities();
+
+      expect(mockedModule.getCaptureCapabilities).toHaveBeenCalledTimes(1);
+    });
+
+    it('coalesces concurrent calls into a single native query', async () => {
+      let resolveNative: (value: CaptureCapabilities) => void = () => undefined;
+      mockedModule.getCaptureCapabilities.mockReturnValue(
+        new Promise(resolve => {
+          resolveNative = resolve;
+        }),
+      );
+
+      const first = useCameraStore.getState().loadCaptureCapabilities();
+      const second = useCameraStore.getState().loadCaptureCapabilities();
+      resolveNative({ supportedQualities: ['1080p'], fpsByQuality: {} });
+
+      await Promise.all([first, second]);
+      expect(mockedModule.getCaptureCapabilities).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves to "unknown" (not a rejection) when the native query fails', async () => {
+      mockedModule.getCaptureCapabilities.mockRejectedValue(new Error('not linked'));
+
+      const result = await useCameraStore.getState().loadCaptureCapabilities();
+
+      expect(result).toEqual({ supportedQualities: [], fpsByQuality: {} });
+    });
+
+    it('reset() clears the cache so the next call re-queries the native bridge', async () => {
+      mockedModule.getCaptureCapabilities.mockResolvedValue({ supportedQualities: ['4k'], fpsByQuality: {} });
+      await useCameraStore.getState().loadCaptureCapabilities();
+
+      useCameraStore.getState().reset();
+      await useCameraStore.getState().loadCaptureCapabilities();
+
+      expect(mockedModule.getCaptureCapabilities).toHaveBeenCalledTimes(2);
     });
   });
 });

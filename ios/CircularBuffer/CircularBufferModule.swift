@@ -1,5 +1,6 @@
 import Foundation
 import React
+import UIKit
 
 @objc(CircularBufferModule)
 class CircularBufferModule: RCTEventEmitter {
@@ -39,12 +40,24 @@ class CircularBufferModule: RCTEventEmitter {
 
         let bufferConfig = BufferConfig(bufferSeconds: bufferSeconds, width: width, height: height, fps: fps)
         CameraEncoderController.shared.configureAndArm(config: bufferConfig, delegate: self)
+        // Continuous recording is pointless if the OS locks the screen (and,
+        // on iOS, backgrounds the app -- suspending the capture session
+        // entirely) a few seconds into an unattended/mounted recording
+        // session. isIdleTimerDisabled must be touched on the main thread;
+        // this @objc method itself isn't guaranteed to run there (see
+        // requiresMainQueueSetup() above).
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
         resolve(nil)
     }
 
     @objc(stopBuffering:rejecter:)
     func stopBuffering(resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         CameraEncoderController.shared.stop()
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         resolve(nil)
     }
 
@@ -109,6 +122,20 @@ class CircularBufferModule: RCTEventEmitter {
                 DispatchQueue.main.async { reject(code, message, nil) }
             }
         )
+    }
+
+    // Queried once by SettingsScreen (and defensively by useCircularBuffer
+    // before starting the buffer) so quality/fps options the hardware
+    // doesn't actually support are disabled/clamped instead of silently
+    // ignored or failing to start. AVCaptureDevice.formats requires no
+    // active session, so this can run standalone without a running buffer.
+    @objc(getCaptureCapabilities:rejecter:)
+    func getCaptureCapabilities(resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        let capabilities = CameraEncoderController.shared.captureCapabilities()
+        resolve([
+            "supportedQualities": capabilities.supportedQualities,
+            "fpsByQuality": capabilities.fpsByQuality,
+        ])
     }
 }
 
