@@ -2,4 +2,8 @@
     <string name="app_name">Peguei</string>
     <string name="shortcut_open_camera_short">Câmera</string>
     <string name="shortcut_open_camera_long">Abrir Peguei na câmera</string>
+    <string name="recording_notification_channel_name">Gravação em segundo plano</string>
+    <string name="recording_notification_title">Peguei está gravando</string>
+    <string name="recording_notification_text">Toque para voltar ao app ou pare a gravação abaixo.</string>
+    <string name="recording_notification_stop_action">Parar</string>
 </resources>

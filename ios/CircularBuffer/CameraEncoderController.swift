@@ -273,6 +273,20 @@ final class CameraEncoderController: NSObject {
                 // but activeFps still records what was requested since
                 // that's what finalizeSave stamps the clip's per-frame
                 // duration metadata with.
+                // Video HDR fuses/extends multiple exposures continuously
+                // while the sensor is running -- a real, ongoing power draw
+                // for an app whose whole point is to keep the camera open
+                // for long stretches, not a one-off cost. Traded off
+                // deliberately for battery life over slightly less dynamic
+                // range in high-contrast scenes. Guarded by
+                // isVideoHDRSupported since setting isVideoHDREnabled on an
+                // unsupported format throws, and automaticallyAdjusts...
+                // must be turned off first or setting isVideoHDREnabled
+                // directly also throws.
+                if format.isVideoHDRSupported {
+                    device.automaticallyAdjustsVideoHDREnabled = false
+                    device.isVideoHDREnabled = false
+                }
                 device.unlockForConfiguration()
                 self.stateLock.lock()
                 self.activeFps = config.fps

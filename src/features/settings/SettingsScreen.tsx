@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import Clipboard from '@react-native-clipboard/clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -183,7 +183,12 @@ export function SettingsScreen({ navigation }: Props) {
         </Text>
       )}
 
-      <DonationSection />
+      {/* Apple rejected the App Store submission (guideline 3.1.1) over this
+          box: any in-app monetary transaction, even an optional donation,
+          must go through In-App Purchase. Google Play has no equivalent
+          restriction, so this stays visible on Android -- see DECISIONS.md
+          "Monetization" for the full rejection/decision. */}
+      {Platform.OS !== 'ios' && <DonationSection />}
 
       <Pressable
         onPress={() => navigation.navigate('Tips')}

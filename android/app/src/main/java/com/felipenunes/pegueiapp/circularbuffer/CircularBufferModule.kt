@@ -1,6 +1,5 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
-import android.view.WindowManager
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -33,24 +32,6 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
      * useCircularBuffer.ts subscribes via circularBufferEvents and routes
      * this into the same error banner as a rejected saveClip().
      */
-    // Continuous recording is pointless if the OS turns the screen off (and,
-    // on Android, eventually backgrounds/suspends the app) a few seconds
-    // into an unattended/mounted recording session -- addFlags/clearFlags
-    // must run on the UI thread, and currentActivity can legitimately be
-    // null (e.g. torn down mid-backgrounding), so this is a best-effort,
-    // silently-skip-if-unavailable call, not something worth failing
-    // startBuffering/stopBuffering over.
-    private fun setKeepScreenOn(enabled: Boolean) {
-        val activity = reactApplicationContext.currentActivity ?: return
-        activity.runOnUiThread {
-            if (enabled) {
-                activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-        }
-    }
-
     private fun emitError(code: String, message: String) {
         val params = WritableNativeMap()
         params.putString("code", code)
@@ -80,7 +61,17 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                     }
                 },
             )
-            setKeepScreenOn(true)
+            // Always started alongside buffering (never only-when-backgrounded), so it's
+            // always started from this foreground-privileged call -- sidesteps Android
+            // 12+'s restriction on starting a foreground service from the background
+            // entirely. Wrapped defensively: if the OS refuses foreground promotion for
+            // any reason, buffering still works fine while the app stays foregrounded --
+            // only background survival degrades, not the core feature.
+            try {
+                CircularBufferForegroundService.start(reactApplicationContext)
+            } catch (_: Throwable) {
+                // non-fatal, see comment above
+            }
             promise.resolve(null)
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.ENCODER_INIT_FAILED, t.message, t)
@@ -100,7 +91,7 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
     fun stopBuffering(promise: Promise) {
         try {
             CameraEncoderController.stop()
-            setKeepScreenOn(false)
+            CircularBufferForegroundService.stop(reactApplicationContext)
             promise.resolve(null)
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.SAVE_FAILED, t.message, t)

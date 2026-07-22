@@ -1,4 +1,5 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { SettingsScreen } from '../SettingsScreen';
@@ -20,6 +21,8 @@ const setOptionsMock = jest.fn();
 const fakeNavigation = { navigate: navigateMock, goBack: goBackMock, setOptions: setOptionsMock } as never;
 
 describe('SettingsScreen', () => {
+  const originalPlatformOS = Platform.OS;
+
   beforeEach(() => {
     jest.clearAllMocks();
     useSettingsStore.setState(DEFAULT_SETTINGS);
@@ -27,13 +30,30 @@ describe('SettingsScreen', () => {
     mockedModule.getCaptureCapabilities.mockResolvedValue({ supportedQualities: [], fpsByQuality: {} });
   });
 
-  it('copies the Pix key to the clipboard when the donation box is pressed', async () => {
+  afterEach(() => {
+    Platform.OS = originalPlatformOS;
+  });
+
+  // Android only -- Apple rejected the App Store submission over this box
+  // (guideline 3.1.1: any in-app monetary transaction must use In-App
+  // Purchase, even an optional donation), so SettingsScreen hides it on
+  // iOS. Google Play has no equivalent restriction. See DECISIONS.md
+  // "Monetization".
+  it('copies the Pix key to the clipboard when the donation box is pressed on Android', async () => {
+    Platform.OS = 'android';
     const { getByTestId, getByText } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
 
     await fireEvent.press(getByTestId('settings-copy-pix'));
 
     expect(Clipboard.setString).toHaveBeenCalledWith('felipennunes04@icloud.com');
     expect(getByText('Copiado!')).toBeTruthy();
+  });
+
+  it('does not render the donation box on iOS', async () => {
+    Platform.OS = 'ios';
+    const { queryByTestId } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(queryByTestId('settings-copy-pix')).toBeNull();
   });
 
   it('navigates to Tips when the "Dicas de uso" row is pressed', async () => {

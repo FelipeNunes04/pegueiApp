@@ -107,6 +107,18 @@ object CameraEncoderController {
     private var maxDigitalZoom: Float = 1f
     private var sensorActiveArraySize: Rect? = null
     private var targetFpsRange: Range<Int>? = null
+    /** Last zoom factor applied via [setZoom], reapplied by [recreateSessionWithNewPreview]
+     *  (whose fresh CaptureRequest.Builder otherwise starts back at the hardware default) --
+     *  see its doc comment. Reset on a real [stopInternal] since JS's own useZoom.ts already
+     *  handles reapplying the user's chosen zoom after a full cold restart. */
+    private var appliedZoom: Float? = null
+
+    /** True while the app is backgrounded/screen-off -- see [enterBackgroundMode]. Unlike
+     *  the fields above, this is NOT reset in [stopInternal]: an explicit stopBuffering()
+     *  can only be called from the (necessarily foregrounded) JS/UI thread, but this flag's
+     *  own transitions are driven independently by Activity lifecycle callbacks, so leaving
+     *  it as-is here is simplest and matches the actual state of the app process. */
+    private var isBackgroundMode = false
 
     private var previewView: CircularBufferPreviewView? = null
     private var previewSurfaceTexture: SurfaceTexture? = null
@@ -173,17 +185,180 @@ object CameraEncoderController {
         previewView = view
         previewSurfaceTexture = surfaceTexture
         previewSurface = surface
-        if (pendingConfig != null && !isRunning.get()) {
+        if (isRunning.get()) {
+            // Only reachable after detachPreviewSurface's soft-detach branch
+            // below actually lost the old SurfaceTexture (backgrounded +
+            // the OS reclaimed it -- less common than the surface simply
+            // surviving, but happens under memory pressure/on some OEMs).
+            // This new Surface was never part of the live session's
+            // original createCaptureSession(...) target list, so unlike
+            // exitBackgroundMode()'s common-case path it can't just be
+            // addTarget()'d back on -- see recreateSessionWithNewPreview.
+            recreateSessionWithNewPreview(surface)
+            return
+        }
+        if (pendingConfig != null) {
             openCameraAndStart()
         }
     }
 
     @Synchronized
     fun detachPreviewSurface() {
+        val oldPreview = previewSurface
         previewView = null
         previewSurfaceTexture = null
         previewSurface = null
+        if (isBackgroundMode && isRunning.get()) {
+            // Soft detach: backgrounded and the OS tore down the preview
+            // surface. Drop it from the live repeating request (idempotent
+            // if enterBackgroundMode already did this) and leave the
+            // session/encoder/audio/ring buffers running headless, instead
+            // of the full teardown below -- that's the entire point of
+            // background mode. Real in-app navigation (Settings/Gallery,
+            // isBackgroundMode false) is untouched and keeps today's
+            // tested full-stop-and-cold-restart behavior.
+            setPreviewTargetIncluded(oldPreview, included = false)
+            return
+        }
         stopInternal()
+    }
+
+    /** Whether the current CaptureRequest should include the preview
+     *  target: only while actually running and in the foreground. Split out
+     *  from the real android.hardware.camera2 mutation in
+     *  [setPreviewTargetIncluded] so this decision is unit-testable under
+     *  plain JUnit, same rationale as [pickTargetFpsRange]'s SDK-free
+     *  overload -- see its doc comment. */
+    internal fun previewTargetIncluded(isBackgroundMode: Boolean, isRunning: Boolean): Boolean =
+        isRunning && !isBackgroundMode
+
+    /**
+     * Mutates the *existing* CaptureRequest.Builder's target set and
+     * resubmits via setRepeatingRequest -- the same "never recreate the
+     * session" pattern setZoom() already uses (see DECISIONS.md "Camera
+     * zoom"). addTarget()/removeTarget() only work for a surface that was
+     * part of the session's original createCaptureSession(...) list, which
+     * `preview` always is here: this is only ever called with either the
+     * still-live previewSurface (enterBackgroundMode/exitBackgroundMode) or
+     * the just-detached oldPreview (detachPreviewSurface), never a fresh
+     * Surface that was never in the session.
+     */
+    private fun setPreviewTargetIncluded(preview: Surface?, included: Boolean) {
+        val session = captureSession ?: return
+        val builder = requestBuilder ?: return
+        if (preview == null) return
+        try {
+            if (included) builder.addTarget(preview) else builder.removeTarget(preview)
+            session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to ${if (included) "add" else "remove"} preview target", t)
+        }
+    }
+
+    /**
+     * Called from MainApplication's ActivityLifecycleCallbacks when the app
+     * backgrounds (switched away, or the screen turns off -- Activity.onStop
+     * fires for both). Drops the preview target from the live repeating
+     * request without touching the encoder/session/ring buffers at all, so
+     * capture -- and therefore the circular buffer and any in-flight manual
+     * recording -- keeps running headless. No-op if already backgrounded or
+     * not currently running (buffering not started).
+     */
+    @Synchronized
+    fun enterBackgroundMode() {
+        if (isBackgroundMode) return
+        isBackgroundMode = true
+        if (isRunning.get()) {
+            setPreviewTargetIncluded(previewSurface, previewTargetIncluded(isBackgroundMode, isRunning.get()))
+        }
+    }
+
+    /**
+     * Called when the app returns to the foreground. In the common case
+     * (the TextureView's SurfaceTexture survived backgrounding, so
+     * previewSurface was never cleared) this alone re-adds the preview
+     * target to the still-open session -- attachPreviewSurface() never even
+     * fires again. If the surface *was* torn down while backgrounded,
+     * previewSurface is null here and there's nothing to re-add yet; the
+     * eventual attachPreviewSurface() call (once the TextureView is
+     * recreated) picks it up via recreateSessionWithNewPreview instead.
+     */
+    @Synchronized
+    fun exitBackgroundMode() {
+        if (!isBackgroundMode) return
+        isBackgroundMode = false
+        if (isRunning.get()) {
+            setPreviewTargetIncluded(previewSurface, previewTargetIncluded(isBackgroundMode, isRunning.get()))
+        }
+    }
+
+    /**
+     * Surgical re-creation of just the CameraCaptureSession on the
+     * already-open cameraDevice, for the soft-detach case where the
+     * TextureView's SurfaceTexture was actually destroyed and recreated
+     * while backgrounded (detachPreviewSurface's isBackgroundMode branch):
+     * the new Surface was never part of the live session's original
+     * createCaptureSession(...) target list, so it can't just be
+     * addTarget()'d the way the common case (exitBackgroundMode) can.
+     * Creating a new session on an already-open CameraDevice is a normal,
+     * supported Camera2 operation (the framework implicitly closes the
+     * prior session) -- unlike openCameraAndStart(), this never touches the
+     * MediaCodec encoder, AudioRecord/audio encoder, or either ring buffer,
+     * so it can't disturb an in-flight manual recording (pendingSave keeps
+     * accumulating frames from the same encoder throughout).
+     */
+    private fun recreateSessionWithNewPreview(preview: Surface) {
+        val device = cameraDevice ?: return
+        val encInputSurface = encoderInputSurface ?: return
+        val config = pendingConfig ?: return
+
+        previewSurfaceTexture?.setDefaultBufferSize(config.width, config.height)
+        previewView?.let { view -> view.post { view.setAspectRatio(config.height, config.width) } }
+
+        try {
+            val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                addTarget(preview)
+                addTarget(encInputSurface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                targetFpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+            }
+            reapplyZoom(builder)
+            requestBuilder = builder
+
+            device.createCaptureSession(
+                listOf(preview, encInputSurface),
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        captureSession = session
+                        session.setRepeatingRequest(builder.build(), null, cameraHandler)
+                    }
+
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        Log.e(TAG, "Failed to recreate capture session with new preview surface")
+                        // Best-effort: leave the still-running session/encoder/buffers alone
+                        // rather than tearing everything down over a cosmetic preview failure.
+                    }
+                },
+                cameraHandler,
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to recreate capture session with new preview", t)
+        }
+    }
+
+    /** Reapplies the last zoom factor set via [setZoom] to a fresh CaptureRequest.Builder --
+     *  needed only by [recreateSessionWithNewPreview], whose new builder otherwise starts
+     *  back at the hardware default zoom despite the session having been zoomed before
+     *  backgrounding. Mirrors setZoom's own zoomRatioRange-vs-crop-region branch exactly. */
+    private fun reapplyZoom(builder: CaptureRequest.Builder) {
+        val zoom = appliedZoom ?: return
+        if (zoomRatioRange != null) {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
+        } else {
+            sensorActiveArraySize?.let { activeArray ->
+                builder.set(CaptureRequest.SCALER_CROP_REGION, cropRegionForZoom(activeArray, zoom))
+            }
+        }
     }
 
     @Synchronized
@@ -722,6 +897,7 @@ object CameraEncoderController {
             }
         }
         session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        appliedZoom = applied
         return applied
     }
 
@@ -787,6 +963,7 @@ object CameraEncoderController {
         maxDigitalZoom = 1f
         sensorActiveArraySize = null
         targetFpsRange = null
+        appliedZoom = null
 
         try {
             captureSession?.stopRepeating()

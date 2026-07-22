@@ -71,7 +71,7 @@ export function PermissionsScreen({ navigation }: Props) {
           <Text style={styles.status}>{STATUS_LABEL[statuses[key]]}</Text>
           <PermissionActionButton
             testID={`permission-action-${key}`}
-            label="Permitir acesso"
+            label="Continuar"
             disabledLabel="Concedido"
             onPress={() => requestPermission(key)}
             disabled={statuses[key] === 'granted'}

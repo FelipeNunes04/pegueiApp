@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
+import { requestNotifications } from 'react-native-permissions';
 import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEvent } from '../native/CircularBufferModule';
 import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
@@ -62,8 +64,38 @@ export function useCircularBuffer() {
     return () => subscription.remove();
   }, [setError]);
 
+  // Android only: fired by CircularBufferForegroundService when the user taps
+  // "Parar" on the persistent background-recording notification -- that stops
+  // CameraEncoderController directly (no JS round-trip), so without this the
+  // UI would stay stuck showing 'buffering'/'recording' even though the
+  // native buffer already stopped, especially if the app was still
+  // backgrounded when the notification action fired.
+  useEffect(() => {
+    if (!circularBufferEvents) {
+      return undefined;
+    }
+    const subscription = circularBufferEvents.addListener(
+      'CircularBufferStoppedExternally',
+      () => {
+        if (isMountedRef.current) {
+          setPhase('idle');
+        }
+      },
+    );
+    return () => subscription.remove();
+  }, [setPhase]);
+
   const start = useCallback(async () => {
     try {
+      // Best-effort/fire-and-forget: lets the Android background-recording
+      // notification (see CircularBufferForegroundService) actually show up.
+      // Not gating start() on this -- a denied/unavailable notification
+      // permission must not block recording, it only means the foreground
+      // service runs invisibly (still functionally protected). iOS has no
+      // equivalent background-recording feature, so this is skipped there.
+      if (Platform.OS === 'android') {
+        requestNotifications([]).catch(() => undefined);
+      }
       // Guards against a persisted quality/fps the device can't actually
       // deliver (e.g. settings restored from a more capable phone's
       // backup) -- resolves to the nearest supported option instead of
