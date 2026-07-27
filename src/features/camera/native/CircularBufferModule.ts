@@ -13,6 +13,10 @@ interface CircularBufferNativeInterface {
   stopBuffering(): Promise<void>;
   startManualRecording(): Promise<void>;
   stopManualRecording(): Promise<SaveClipResult>;
+  /** Fire-and-forget: plays the platform's built-in "begin video recording" cue. */
+  playRecordingStartSound(): void;
+  /** Fire-and-forget: plays the platform's built-in "end video recording" cue. */
+  playRecordingStopSound(): void;
   isBuffering(): Promise<boolean>;
   /** Returns the zoom factor actually applied (clamped to the device's supported range). */
   setZoom(factor: number): Promise<number>;
@@ -40,6 +44,8 @@ export const CircularBufferModule: CircularBufferNativeInterface = {
   stopBuffering: () => assertLinked().stopBuffering(),
   startManualRecording: () => assertLinked().startManualRecording(),
   stopManualRecording: () => assertLinked().stopManualRecording(),
+  playRecordingStartSound: () => assertLinked().playRecordingStartSound(),
+  playRecordingStopSound: () => assertLinked().playRecordingStopSound(),
   isBuffering: () => assertLinked().isBuffering(),
   setZoom: factor => assertLinked().setZoom(factor),
   getZoomInfo: () => assertLinked().getZoomInfo(),

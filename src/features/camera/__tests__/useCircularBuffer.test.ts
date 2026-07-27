@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useCircularBuffer } from '../hooks/useCircularBuffer';
 import { useCameraStore } from '../store/cameraStore';
@@ -13,6 +14,8 @@ jest.mock('../native/CircularBufferModule', () => {
       stopBuffering: jest.fn().mockResolvedValue(undefined),
       startManualRecording: jest.fn().mockResolvedValue(undefined),
       stopManualRecording: jest.fn().mockResolvedValue({ path: '/clips/clip_1.mp4', durationSeconds: 12 }),
+      playRecordingStartSound: jest.fn(),
+      playRecordingStopSound: jest.fn(),
       isBuffering: jest.fn().mockResolvedValue(true),
       // Empty/unknown by default -- resolveSupportedQuality/Fps treat this as
       // "couldn't determine, don't restrict anything", so existing tests
@@ -41,6 +44,7 @@ describe('useCircularBuffer', () => {
     useSettingsStore.setState(DEFAULT_SETTINGS);
     useCameraStore.getState().reset();
     mockedModule.getCaptureCapabilities.mockResolvedValue({ supportedQualities: [], fpsByQuality: {} });
+    Platform.OS = 'ios';
   });
 
   it('start() moves phase to "buffering" on success', async () => {
@@ -168,6 +172,27 @@ describe('useCircularBuffer', () => {
     expect(useRecordingStore.getState().phase).toBe('recording');
   });
 
+  // Sound feedback is Android-only -- iOS mutes AudioServicesPlaySystemSound
+  // for the whole duration of this app's active recording session, with no
+  // reliable workaround found, so only vibration fires there (see
+  // playStartFeedback's doc comment in useCircularBuffer.ts).
+  it('startRecording() plays the start sound on Android but not on iOS', async () => {
+    Platform.OS = 'android';
+    const { result: androidResult } = await renderHook(() => useCircularBuffer());
+    await act(async () => {
+      await androidResult.current.startRecording();
+    });
+    expect(mockedModule.playRecordingStartSound).toHaveBeenCalled();
+
+    jest.clearAllMocks();
+    Platform.OS = 'ios';
+    const { result: iosResult } = await renderHook(() => useCircularBuffer());
+    await act(async () => {
+      await iosResult.current.startRecording();
+    });
+    expect(mockedModule.playRecordingStartSound).not.toHaveBeenCalled();
+  });
+
   it('startRecording() surfaces a native rejection as an error instead of throwing', async () => {
     mockedModule.startManualRecording.mockRejectedValueOnce(new Error('O buffer não está ativo.'));
     const { result } = await renderHook(() => useCircularBuffer());
@@ -191,6 +216,23 @@ describe('useCircularBuffer', () => {
     expect(clip).toMatchObject({ path: expect.stringMatching(/^\/clips\/clip_\d+_d12000\.mp4$/), durationSeconds: 12, triggeredBy: 'manual' });
     expect(useRecordingStore.getState().clips[0]).toMatchObject({ durationSeconds: 12, triggeredBy: 'manual' });
     expect(useRecordingStore.getState().phase).toBe('buffering');
+  });
+
+  it('stopRecording() plays the stop sound on Android but not on iOS', async () => {
+    Platform.OS = 'android';
+    const { result: androidResult } = await renderHook(() => useCircularBuffer());
+    await act(async () => {
+      await androidResult.current.stopRecording();
+    });
+    expect(mockedModule.playRecordingStopSound).toHaveBeenCalled();
+
+    jest.clearAllMocks();
+    Platform.OS = 'ios';
+    const { result: iosResult } = await renderHook(() => useCircularBuffer());
+    await act(async () => {
+      await iosResult.current.stopRecording();
+    });
+    expect(mockedModule.playRecordingStopSound).not.toHaveBeenCalled();
   });
 
   it('stopRecording() surfaces a rejection as an error and returns null', async () => {

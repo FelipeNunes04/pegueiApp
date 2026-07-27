@@ -1,3 +1,5 @@
+import AudioToolbox
+import AVFoundation
 import Foundation
 import React
 import UIKit
@@ -90,6 +92,33 @@ class CircularBufferModule: RCTEventEmitter {
                 DispatchQueue.main.async { reject(code, message, nil) }
             }
         )
+    }
+
+    // Re-asserted right here (not just once at session setup) because
+    // AVCaptureSession silently resets this flag on the shared audio session
+    // whenever it attaches/reconfigures the audio input -- which happens
+    // after CameraEncoderController's own setup call, so relying on that
+    // alone left system sounds/haptics muted for the entire buffering
+    // session. Cheap enough to call on every play.
+    private func allowSystemSoundsDuringRecording() {
+        try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
+    }
+
+    // System sound IDs 1113/1114 are Control Center's own "begin/end screen
+    // recording" chimes -- picked over the more obscure 1117/1118 ("begin/end
+    // video recording") because those aren't reliably mapped to an actual
+    // sound asset on current iOS, while 1113/1114 are exercised live by a
+    // first-party OS feature and reliably present.
+    @objc
+    func playRecordingStartSound() {
+        allowSystemSoundsDuringRecording()
+        AudioServicesPlaySystemSound(1113)
+    }
+
+    @objc
+    func playRecordingStopSound() {
+        allowSystemSoundsDuringRecording()
+        AudioServicesPlaySystemSound(1114)
     }
 
     @objc(isBuffering:rejecter:)

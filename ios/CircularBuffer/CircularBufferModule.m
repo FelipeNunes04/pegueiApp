@@ -15,6 +15,10 @@ RCT_EXTERN_METHOD(startManualRecording:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(stopManualRecording:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(playRecordingStartSound)
+
+RCT_EXTERN_METHOD(playRecordingStopSound)
+
 RCT_EXTERN_METHOD(isBuffering:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 

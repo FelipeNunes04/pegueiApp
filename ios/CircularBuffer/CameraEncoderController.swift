@@ -689,6 +689,14 @@ final class CameraEncoderController: NSObject {
         }
         pendingSave = nil
         stateLock.unlock()
+        // This clip's frames are already captured into `save` (headFrames/
+        // tailFrames), decoupled from the ring buffers -- so clearing them
+        // here is safe and necessary: otherwise footage already saved in
+        // this clip's tail keeps sitting in the ring buffer and resurfaces
+        // as pre-roll ("head") for whatever manual recording starts next,
+        // duplicating content across consecutive clips.
+        ringBuffer?.clear()
+        audioRingBuffer?.clear()
         finalizeSave(save, onSaved: onSaved, onFailed: onFailed)
     }
 

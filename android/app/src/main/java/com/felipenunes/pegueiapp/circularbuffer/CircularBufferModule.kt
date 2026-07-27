@@ -1,5 +1,6 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
+import android.media.MediaActionSound
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -13,6 +14,11 @@ import java.io.File
 class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     override fun getName(): String = "CircularBufferModule"
+
+    // START_VIDEO_RECORDING/STOP_VIDEO_RECORDING are the platform's built-in
+    // recording cues (same ones the stock Camera app uses), so no bundled
+    // audio asset is needed here.
+    private val mediaActionSound by lazy { MediaActionSound() }
 
     // Must match RNFS.DocumentDirectoryPath + "/PegueiClips" (files.ts CLIPS_DIR),
     // which is what the JS gallery reads from -- mirrors the iOS module's
@@ -130,6 +136,16 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                 }
             },
         )
+    }
+
+    @ReactMethod
+    fun playRecordingStartSound() {
+        mediaActionSound.play(MediaActionSound.START_VIDEO_RECORDING)
+    }
+
+    @ReactMethod
+    fun playRecordingStopSound() {
+        mediaActionSound.play(MediaActionSound.STOP_VIDEO_RECORDING)
     }
 
     @ReactMethod

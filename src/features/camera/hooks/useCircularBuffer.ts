@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import RNFS from 'react-native-fs';
 import { requestNotifications } from 'react-native-permissions';
 import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEvent } from '../native/CircularBufferModule';
@@ -27,6 +27,35 @@ import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
  * config instead of silently continuing with whatever was configured at the
  * very first mount.
  */
+// Distinct vibration patterns (single short pulse vs. two short pulses) so
+// start/stop are also distinguishable by feel, on top of the distinct start/
+// stop system sounds (see CircularBufferModule.playRecordingStartSound/
+// StopSound). Sound is Android-only: iOS mutes AudioServicesPlaySystemSound
+// for the entire duration of an active .playAndRecord session (confirmed
+// on-device even after opting in via setAllowHapticsAndSystemSoundsDuring
+// Recording), so there's currently no reliable way to make it audible there.
+function playStartFeedback() {
+  Vibration.vibrate(40);
+  if (Platform.OS === 'android') {
+    try {
+      CircularBufferModule.playRecordingStartSound();
+    } catch {
+      // Non-fatal: an unlinked/unavailable native module must not block recording.
+    }
+  }
+}
+
+function playStopFeedback() {
+  Vibration.vibrate([0, 40, 80, 40]);
+  if (Platform.OS === 'android') {
+    try {
+      CircularBufferModule.playRecordingStopSound();
+    } catch {
+      // Non-fatal: see playStartFeedback.
+    }
+  }
+}
+
 export function useCircularBuffer() {
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const videoQuality = useSettingsStore(s => s.videoQuality);
@@ -69,9 +98,12 @@ export function useCircularBuffer() {
   // CameraEncoderController directly (no JS round-trip), so without this the
   // UI would stay stuck showing 'buffering'/'recording' even though the
   // native buffer already stopped, especially if the app was still
-  // backgrounded when the notification action fired.
+  // backgrounded when the notification action fired. Must stay gated to
+  // Android: the iOS native module never declares this in supportedEvents(),
+  // so subscribing to it there throws (RCTEventEmitter enforces the
+  // supported-events list at addListener time).
   useEffect(() => {
-    if (!circularBufferEvents) {
+    if (!circularBufferEvents || Platform.OS !== 'android') {
       return undefined;
     }
     const subscription = circularBufferEvents.addListener(
@@ -143,6 +175,7 @@ export function useCircularBuffer() {
       await CircularBufferModule.startManualRecording();
       if (isMountedRef.current) {
         setPhase('recording');
+        playStartFeedback();
       }
     } catch (err) {
       // Returning to this screen (e.g. from Gallery) detaches/reattaches
@@ -167,6 +200,7 @@ export function useCircularBuffer() {
             await CircularBufferModule.startManualRecording();
             if (isMountedRef.current) {
               setPhase('recording');
+              playStartFeedback();
             }
           } catch (retryErr) {
             if (isMountedRef.current) {
@@ -186,6 +220,9 @@ export function useCircularBuffer() {
     setPhase('saving');
     try {
       const result = await CircularBufferModule.stopManualRecording();
+      if (isMountedRef.current) {
+        playStopFeedback();
+      }
       const createdAt = Date.now();
 
       // Rename to embed the real duration in the filename so a cold
