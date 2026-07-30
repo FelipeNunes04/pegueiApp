@@ -29,30 +29,23 @@ import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
  */
 // Distinct vibration patterns (single short pulse vs. two short pulses) so
 // start/stop are also distinguishable by feel, on top of the distinct start/
-// stop system sounds (see CircularBufferModule.playRecordingStartSound/
-// StopSound). Sound is Android-only: iOS mutes AudioServicesPlaySystemSound
-// for the entire duration of an active .playAndRecord session (confirmed
-// on-device even after opting in via setAllowHapticsAndSystemSoundsDuring
-// Recording), so there's currently no reliable way to make it audible there.
+// stop sounds (see CircularBufferModule.playRecordingStartSound/StopSound --
+// Android plays a MediaActionSound, iOS a synthesized AVAudioPlayer tone).
 function playStartFeedback() {
   Vibration.vibrate(40);
-  if (Platform.OS === 'android') {
-    try {
-      CircularBufferModule.playRecordingStartSound();
-    } catch {
-      // Non-fatal: an unlinked/unavailable native module must not block recording.
-    }
+  try {
+    CircularBufferModule.playRecordingStartSound();
+  } catch {
+    // Non-fatal: an unlinked/unavailable native module must not block recording.
   }
 }
 
 function playStopFeedback() {
   Vibration.vibrate([0, 40, 80, 40]);
-  if (Platform.OS === 'android') {
-    try {
-      CircularBufferModule.playRecordingStopSound();
-    } catch {
-      // Non-fatal: see playStartFeedback.
-    }
+  try {
+    CircularBufferModule.playRecordingStopSound();
+  } catch {
+    // Non-fatal: see playStartFeedback.
   }
 }
 

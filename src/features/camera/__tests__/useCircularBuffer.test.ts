@@ -172,11 +172,7 @@ describe('useCircularBuffer', () => {
     expect(useRecordingStore.getState().phase).toBe('recording');
   });
 
-  // Sound feedback is Android-only -- iOS mutes AudioServicesPlaySystemSound
-  // for the whole duration of this app's active recording session, with no
-  // reliable workaround found, so only vibration fires there (see
-  // playStartFeedback's doc comment in useCircularBuffer.ts).
-  it('startRecording() plays the start sound on Android but not on iOS', async () => {
+  it('startRecording() plays the start sound on both Android and iOS', async () => {
     Platform.OS = 'android';
     const { result: androidResult } = await renderHook(() => useCircularBuffer());
     await act(async () => {
@@ -190,7 +186,7 @@ describe('useCircularBuffer', () => {
     await act(async () => {
       await iosResult.current.startRecording();
     });
-    expect(mockedModule.playRecordingStartSound).not.toHaveBeenCalled();
+    expect(mockedModule.playRecordingStartSound).toHaveBeenCalled();
   });
 
   it('startRecording() surfaces a native rejection as an error instead of throwing', async () => {
@@ -218,7 +214,7 @@ describe('useCircularBuffer', () => {
     expect(useRecordingStore.getState().phase).toBe('buffering');
   });
 
-  it('stopRecording() plays the stop sound on Android but not on iOS', async () => {
+  it('stopRecording() plays the stop sound on both Android and iOS', async () => {
     Platform.OS = 'android';
     const { result: androidResult } = await renderHook(() => useCircularBuffer());
     await act(async () => {
@@ -232,7 +228,7 @@ describe('useCircularBuffer', () => {
     await act(async () => {
       await iosResult.current.stopRecording();
     });
-    expect(mockedModule.playRecordingStopSound).not.toHaveBeenCalled();
+    expect(mockedModule.playRecordingStopSound).toHaveBeenCalled();
   });
 
   it('stopRecording() surfaces a rejection as an error and returns null', async () => {

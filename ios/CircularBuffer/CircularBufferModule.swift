@@ -1,4 +1,3 @@
-import AudioToolbox
 import AVFoundation
 import Foundation
 import React
@@ -94,31 +93,82 @@ class CircularBufferModule: RCTEventEmitter {
         )
     }
 
-    // Re-asserted right here (not just once at session setup) because
-    // AVCaptureSession silently resets this flag on the shared audio session
-    // whenever it attaches/reconfigures the audio input -- which happens
-    // after CameraEncoderController's own setup call, so relying on that
-    // alone left system sounds/haptics muted for the entire buffering
-    // session. Cheap enough to call on every play.
-    private func allowSystemSoundsDuringRecording() {
-        try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
-    }
+    // AudioServicesPlaySystemSound (the obvious API for a UI cue) is muted
+    // for the entire duration of an active .playAndRecord session -- confirmed
+    // on-device even after opting in via setAllowHapticsAndSystemSoundsDuring
+    // Recording(true). A plain AVAudioPlayer doesn't have that restriction:
+    // .playAndRecord (see CameraEncoderController's setCategory call) exists
+    // specifically to allow simultaneous playback + capture, which is how
+    // apps like Voice Memos play their own start/stop chime while already
+    // recording. The tones are synthesized in-process rather than bundled as
+    // asset files, so no Xcode resource wiring is needed.
+    private lazy var startSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.12)])
+    private lazy var stopSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.09), (660, 0.09)])
 
-    // System sound IDs 1113/1114 are Control Center's own "begin/end screen
-    // recording" chimes -- picked over the more obscure 1117/1118 ("begin/end
-    // video recording") because those aren't reliably mapped to an actual
-    // sound asset on current iOS, while 1113/1114 are exercised live by a
-    // first-party OS feature and reliably present.
     @objc
     func playRecordingStartSound() {
-        allowSystemSoundsDuringRecording()
-        AudioServicesPlaySystemSound(1113)
+        startSoundPlayer?.currentTime = 0
+        startSoundPlayer?.play()
     }
 
     @objc
     func playRecordingStopSound() {
-        allowSystemSoundsDuringRecording()
-        AudioServicesPlaySystemSound(1114)
+        stopSoundPlayer?.currentTime = 0
+        stopSoundPlayer?.play()
+    }
+
+    private static func makeBeepPlayer(notes: [(frequency: Double, duration: Double)]) -> AVAudioPlayer? {
+        let player = try? AVAudioPlayer(data: makeBeepWavData(notes: notes), fileTypeHint: AVFileType.wav.rawValue)
+        player?.prepareToPlay()
+        return player
+    }
+
+    // Renders `notes` (each a frequency/duration pair, played back to back)
+    // as a mono 16-bit PCM WAV in memory. A short linear fade in/out on each
+    // note avoids the audible click a hard-edged sine transition would cause.
+    private static func makeBeepWavData(notes: [(frequency: Double, duration: Double)], sampleRate: Double = 44100) -> Data {
+        let fadeSeconds = 0.01
+        var samples: [Int16] = []
+        for note in notes {
+            let sampleCount = Int(note.duration * sampleRate)
+            let fadeSamples = Int(fadeSeconds * sampleRate)
+            for n in 0..<sampleCount {
+                let t = Double(n) / sampleRate
+                var amplitude = 1.0
+                if n < fadeSamples {
+                    amplitude = Double(n) / Double(fadeSamples)
+                } else if n > sampleCount - fadeSamples {
+                    amplitude = Double(sampleCount - n) / Double(fadeSamples)
+                }
+                let value = sin(2.0 * Double.pi * note.frequency * t) * amplitude * 0.6
+                samples.append(Int16(value * Double(Int16.max)))
+            }
+        }
+
+        var data = Data()
+        func appendU32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+        func appendU16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+
+        let byteRate = UInt32(sampleRate) * 2 // mono, 16-bit
+        let subchunk2Size = UInt32(samples.count * 2)
+
+        data.append("RIFF".data(using: .ascii)!)
+        appendU32(36 + subchunk2Size)
+        data.append("WAVE".data(using: .ascii)!)
+        data.append("fmt ".data(using: .ascii)!)
+        appendU32(16) // Subchunk1Size for PCM
+        appendU16(1) // AudioFormat: PCM
+        appendU16(1) // NumChannels: mono
+        appendU32(UInt32(sampleRate))
+        appendU32(byteRate)
+        appendU16(2) // BlockAlign
+        appendU16(16) // BitsPerSample
+        data.append("data".data(using: .ascii)!)
+        appendU32(subchunk2Size)
+        for sample in samples {
+            appendU16(UInt16(bitPattern: sample))
+        }
+        return data
     }
 
     @objc(isBuffering:rejecter:)
