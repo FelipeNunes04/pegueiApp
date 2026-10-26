@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Platform, Vibration } from 'react-native';
+import { AppState, Platform, Vibration } from 'react-native';
 import RNFS from 'react-native-fs';
 import { requestNotifications } from 'react-native-permissions';
-import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEvent } from '../native/CircularBufferModule';
+import {
+  CircularBufferModule,
+  circularBufferEvents,
+  type CircularBufferErrorEvent,
+  type CircularBufferHealthEvent,
+} from '../native/CircularBufferModule';
 import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
@@ -60,6 +65,7 @@ export function useCircularBuffer() {
   const setPhase = useRecordingStore(s => s.setPhase);
   const setError = useRecordingStore(s => s.setError);
   const addClip = useRecordingStore(s => s.addClip);
+  const setBufferHealth = useRecordingStore(s => s.setBufferHealth);
 
   const isMountedRef = useRef(true);
   useEffect(() => () => {
@@ -110,6 +116,27 @@ export function useCircularBuffer() {
     return () => subscription.remove();
   }, [setPhase]);
 
+  // Native watchdog/thermal/interruption state (see the bridge contract in
+  // docs/plans/2026-10-21-reliability-battery-triggers.md). Emitted only on
+  // transitions, so the store keeps the last one until start()/stop()
+  // resets it -- a fresh pipeline is healthy until told otherwise. Both
+  // platforms declare this event (iOS lists it in supportedEvents()), so
+  // unlike CircularBufferStoppedExternally it isn't platform-gated.
+  useEffect(() => {
+    if (!circularBufferEvents) {
+      return undefined;
+    }
+    const subscription = circularBufferEvents.addListener(
+      'CircularBufferHealth',
+      (event: CircularBufferHealthEvent) => {
+        if (isMountedRef.current) {
+          setBufferHealth(event.state);
+        }
+      },
+    );
+    return () => subscription.remove();
+  }, [setBufferHealth]);
+
   const start = useCallback(async () => {
     try {
       // Best-effort/fire-and-forget: lets the Android background-recording
@@ -137,31 +164,69 @@ export function useCircularBuffer() {
       if (resolvedFps !== fps) setFps(resolvedFps);
 
       const preset = VIDEO_QUALITY_PRESETS[resolvedQuality];
+      // Set *before* the native call: startBuffering() resolves as soon as
+      // the session is armed, and a setup failure (e.g. no back camera,
+      // camera busy) arrives separately as a CircularBufferError event on
+      // another thread -- often before this promise's resolution reaches JS.
+      // Setting 'buffering' after the await let that resolution overwrite
+      // the 'error' phase, leaving "Sempre gravando" (and its pulse) on
+      // screen with nothing recording.
+      if (isMountedRef.current) {
+        setBufferHealth('healthy');
+        setPhase('buffering');
+      }
       await CircularBufferModule.startBuffering({
         bufferSeconds,
         width: preset.width,
         height: preset.height,
         fps: resolvedFps,
       });
-      if (isMountedRef.current) {
-        setPhase('buffering');
-      }
     } catch (err) {
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
     }
-  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError]);
+  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError, setBufferHealth]);
+
+  // Neither platform can keep the actual Camera2/AVCaptureSession alive once
+  // the OS backgrounds the app (Android: revoked outright without a
+  // foreground service, see FeatureFlags.BACKGROUND_RECORDING_ENABLED; iOS:
+  // always suspended, see DECISIONS.md "Background recording"), and unlike
+  // in-app navigation to Settings/Gallery, backgrounding never
+  // detaches/reattaches the native preview view -- so nothing else re-triggers
+  // a restart. Without this, returning to the app after backgrounding it
+  // would leave the buffer silently dead until the user happened to navigate
+  // elsewhere and back. isBuffering() is checked first so this never
+  // interrupts a buffer that's still actually alive (e.g. Android with the
+  // background-recording flag on).
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener('change', nextState => {
+      const cameBackToForeground =
+        previousState.match(/inactive|background/) && nextState === 'active';
+      previousState = nextState;
+      if (!cameBackToForeground) return;
+      CircularBufferModule.isBuffering()
+        .then(stillBuffering => {
+          if (!stillBuffering && isMountedRef.current) {
+            start();
+          }
+        })
+        .catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, [start]);
 
   const stop = useCallback(async () => {
     try {
       await CircularBufferModule.stopBuffering();
     } finally {
       if (isMountedRef.current) {
+        setBufferHealth('healthy');
         setPhase('idle');
       }
     }
-  }, [setPhase]);
+  }, [setPhase, setBufferHealth]);
 
   const startRecording = useCallback(async () => {
     try {

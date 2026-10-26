@@ -1,6 +1,14 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.media.MediaActionSound
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
+import android.view.WindowManager
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -9,6 +17,7 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableNativeArray
 import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.felipenunes.pegueiapp.FeatureFlags
 import java.io.File
 
 class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -49,6 +58,23 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
         }
     }
 
+    /**
+     * `CircularBufferHealth` (bridge contract): `{ state, reason? }`, emitted by
+     * CameraEncoderController only on transitions -- see BufferHealth /
+     * resolveBufferHealth in BufferPolicies.kt for the states and their
+     * precedence. Same emission path as [emitError].
+     */
+    private fun emitHealth(state: String, reason: String?) {
+        val params = Arguments.createMap()
+        params.putString("state", state)
+        if (reason != null) params.putString("reason", reason)
+        if (reactApplicationContext.hasActiveReactInstance()) {
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(EVENT_HEALTH, params)
+        }
+    }
+
     @ReactMethod
     fun startBuffering(config: ReadableMap, promise: Promise) {
         try {
@@ -65,6 +91,10 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                     override fun onError(code: String, message: String) {
                         emitError(code, message)
                     }
+
+                    override fun onHealth(state: String, reason: String?) {
+                        emitHealth(state, reason)
+                    }
                 },
             )
             // Always started alongside buffering (never only-when-backgrounded), so it's
@@ -73,10 +103,12 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
             // entirely. Wrapped defensively: if the OS refuses foreground promotion for
             // any reason, buffering still works fine while the app stays foregrounded --
             // only background survival degrades, not the core feature.
-            try {
-                CircularBufferForegroundService.start(reactApplicationContext)
-            } catch (_: Throwable) {
-                // non-fatal, see comment above
+            if (FeatureFlags.BACKGROUND_RECORDING_ENABLED) {
+                try {
+                    CircularBufferForegroundService.start(reactApplicationContext)
+                } catch (_: Throwable) {
+                    // non-fatal, see comment above
+                }
             }
             promise.resolve(null)
         } catch (t: Throwable) {
@@ -98,6 +130,9 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
         try {
             CameraEncoderController.stop()
             CircularBufferForegroundService.stop(reactApplicationContext)
+            // stop() also clears the controller's pocket-mode flag; never leave the
+            // window dimmed behind a buffer that's no longer running.
+            applyPocketBrightness(false)
             promise.resolve(null)
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.SAVE_FAILED, t.message, t)
@@ -201,5 +236,111 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
         } catch (t: Throwable) {
             promise.reject(CircularBufferErrorCodes.ENCODER_INIT_FAILED, t.message, t)
         }
+    }
+
+    /**
+     * Pocket mode (bridge contract): dims this Activity's window to
+     * [CameraEncoderController.POCKET_MODE_BRIGHTNESS] -- a per-window
+     * override, so no WRITE_SETTINGS permission and the system brightness
+     * setting is untouched -- and has the controller drop the preview target
+     * from the repeating request (same path as background mode; capture and
+     * encoding keep running). Exiting restores BRIGHTNESS_OVERRIDE_NONE (the
+     * user's own brightness) and re-adds the preview unless the app is also
+     * backgrounded. Resolves even with no current Activity: the camera-side
+     * half still applies, and the window will be fresh (undimmed) when one
+     * comes back anyway.
+     */
+    @ReactMethod
+    fun setPocketMode(enabled: Boolean, promise: Promise) {
+        try {
+            CameraEncoderController.setPocketMode(enabled)
+            applyPocketBrightness(enabled)
+            promise.resolve(null)
+        } catch (t: Throwable) {
+            promise.reject(CircularBufferErrorCodes.NOT_BUFFERING, t.message, t)
+        }
+    }
+
+    private fun applyPocketBrightness(enabled: Boolean) {
+        val activity = reactApplicationContext.currentActivity ?: return
+        activity.runOnUiThread {
+            val window = activity.window ?: return@runOnUiThread
+            val attributes = window.attributes
+            attributes.screenBrightness = if (enabled) {
+                CameraEncoderController.POCKET_MODE_BRIGHTNESS
+            } else {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = attributes
+        }
+    }
+
+    /**
+     * Gates MainActivity.dispatchKeyEvent's interception of volume / camera /
+     * media / enter keys (see decideHardwareKey in BufferPolicies.kt). Even
+     * when enabled, keys are only intercepted while the buffer is actually
+     * running, so volume keeps working everywhere else in the app.
+     */
+    @ReactMethod
+    fun setHardwareTriggerEnabled(enabled: Boolean, promise: Promise) {
+        CameraEncoderController.hardwareTriggerEnabled = enabled
+        promise.resolve(null)
+    }
+
+    /**
+     * Whether the user has exempted Peguei from Doze/app-standby battery
+     * optimizations -- the JS battery card shows only when this is false.
+     * Doze can otherwise defer the foreground service's work on some OEMs
+     * during long screen-off buffering.
+     */
+    @ReactMethod
+    fun isIgnoringBatteryOptimizations(promise: Promise) {
+        try {
+            val pm = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+            promise.resolve(pm.isIgnoringBatteryOptimizations(reactApplicationContext.packageName))
+        } catch (t: Throwable) {
+            promise.reject(CircularBufferErrorCodes.NO_ACTIVITY, t.message, t)
+        }
+    }
+
+    /**
+     * Opens the system's battery-optimization list
+     * (ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) where the user picks
+     * Peguei themselves. Deliberately NOT ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+     * (the one-tap dialog): that needs the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+     * permission, which Google Play only allows for a narrow set of app
+     * categories this app isn't in. Some OEM builds strip that settings
+     * screen, so fall back to this app's own App info page (battery is one
+     * tap away from there on those builds).
+     */
+    @ReactMethod
+    fun openBatteryOptimizationSettings(promise: Promise) {
+        val context = reactApplicationContext
+        val activity = context.currentActivity
+        fun launch(intent: Intent) {
+            if (activity != null) {
+                activity.startActivity(intent)
+            } else {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+        try {
+            launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            promise.resolve(null)
+        } catch (_: ActivityNotFoundException) {
+            try {
+                launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                promise.resolve(null)
+            } catch (t: Throwable) {
+                promise.reject(CircularBufferErrorCodes.NO_ACTIVITY, t.message, t)
+            }
+        } catch (t: Throwable) {
+            promise.reject(CircularBufferErrorCodes.NO_ACTIVITY, t.message, t)
+        }
+    }
+
+    companion object {
+        const val EVENT_HEALTH = "CircularBufferHealth"
+        const val EVENT_HARDWARE_TRIGGER = "CircularBufferHardwareTrigger"
     }
 }

@@ -40,7 +40,7 @@ const mockedModule = CircularBufferModule as jest.Mocked<typeof CircularBufferMo
 describe('useCircularBuffer', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    useRecordingStore.setState({ phase: 'idle', errorMessage: null, clips: [] });
+    useRecordingStore.setState({ phase: 'idle', errorMessage: null, clips: [], bufferHealth: 'healthy' });
     useSettingsStore.setState(DEFAULT_SETTINGS);
     useCameraStore.getState().reset();
     mockedModule.getCaptureCapabilities.mockResolvedValue({ supportedQualities: [], fpsByQuality: {} });
@@ -257,6 +257,25 @@ describe('useCircularBuffer', () => {
     await waitFor(() => expect(useRecordingStore.getState().errorMessage).toBe('Câmera ocupada por outro app.'));
   });
 
+  it('keeps the "error" phase when the setup-failure event beats startBuffering()\'s resolution', async () => {
+    // Native arms the session and resolves right away; a setup failure (no
+    // back camera, camera busy) is emitted separately and can reach JS first.
+    mockedModule.startBuffering.mockImplementationOnce(async () => {
+      (circularBufferEvents as unknown as { __emit: Function }).__emit('CircularBufferError', {
+        code: 'ENCODER_INIT_FAILED',
+        message: 'Nenhuma câmera traseira disponível.',
+      });
+    });
+    const { result } = await renderHook(() => useCircularBuffer());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(useRecordingStore.getState().phase).toBe('error');
+    expect(useRecordingStore.getState().errorMessage).toBe('Nenhuma câmera traseira disponível.');
+  });
+
   it('stop() resets phase to "idle"', async () => {
     const { result } = await renderHook(() => useCircularBuffer());
 
@@ -268,5 +287,141 @@ describe('useCircularBuffer', () => {
     });
 
     expect(useRecordingStore.getState().phase).toBe('idle');
+  });
+
+  it('routes CircularBufferHealth transitions into recordingStore.bufferHealth', async () => {
+    await renderHook(() => useCircularBuffer());
+
+    await act(async () => {
+      (circularBufferEvents as unknown as { __emit: Function }).__emit('CircularBufferHealth', {
+        state: 'throttled',
+        reason: 'thermal-serious',
+      });
+    });
+    expect(useRecordingStore.getState().bufferHealth).toBe('throttled');
+
+    await act(async () => {
+      (circularBufferEvents as unknown as { __emit: Function }).__emit('CircularBufferHealth', { state: 'healthy' });
+    });
+    expect(useRecordingStore.getState().bufferHealth).toBe('healthy');
+  });
+
+  // A fresh (or stopped) pipeline must not keep showing a stale warning
+  // from the previous run -- health events only arrive on transitions.
+  it('start() and stop() reset bufferHealth to "healthy"', async () => {
+    const { result } = await renderHook(() => useCircularBuffer());
+
+    useRecordingStore.setState({ bufferHealth: 'interrupted' });
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(useRecordingStore.getState().bufferHealth).toBe('healthy');
+
+    useRecordingStore.setState({ bufferHealth: 'recovering' });
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(useRecordingStore.getState().bufferHealth).toBe('healthy');
+  });
+
+  it('Android: CircularBufferStoppedExternally (notification "Parar") resets phase to idle', async () => {
+    Platform.OS = 'android';
+    const { result } = await renderHook(() => useCircularBuffer());
+    await act(async () => {
+      await result.current.start();
+    });
+
+    await act(async () => {
+      (circularBufferEvents as unknown as { __emit: Function }).__emit('CircularBufferStoppedExternally', {});
+    });
+
+    expect(useRecordingStore.getState().phase).toBe('idle');
+  });
+
+  describe('restart on return to foreground', () => {
+    const { AppState } = require('react-native');
+    let handler: ((state: string) => void) | undefined;
+
+    beforeEach(() => {
+      handler = undefined;
+      Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true });
+      jest.spyOn(AppState, 'addEventListener').mockImplementation((...args: unknown[]) => {
+        handler = args[1] as (state: string) => void;
+        return { remove: jest.fn() };
+      });
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('restarts the buffer when it died while backgrounded', async () => {
+      await renderHook(() => useCircularBuffer());
+      mockedModule.isBuffering.mockResolvedValueOnce(false);
+
+      await act(async () => {
+        handler?.('background');
+      });
+      expect(mockedModule.isBuffering).not.toHaveBeenCalled();
+      await act(async () => {
+        handler?.('active');
+      });
+
+      await waitFor(() => expect(mockedModule.startBuffering).toHaveBeenCalledTimes(1));
+    });
+
+    it('leaves a still-alive buffer alone', async () => {
+      await renderHook(() => useCircularBuffer());
+      mockedModule.isBuffering.mockResolvedValueOnce(true);
+
+      await act(async () => {
+        handler?.('background');
+      });
+      await act(async () => {
+        handler?.('active');
+      });
+
+      expect(mockedModule.isBuffering).toHaveBeenCalled();
+      expect(mockedModule.startBuffering).not.toHaveBeenCalled();
+    });
+  });
+
+  it('startRecording() retries after E_NOT_BUFFERING once the buffer reports ready', async () => {
+    jest.useFakeTimers();
+    try {
+      mockedModule.startManualRecording.mockRejectedValueOnce(Object.assign(new Error('not buffering'), { code: 'E_NOT_BUFFERING' }));
+      mockedModule.isBuffering.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      const { result } = await renderHook(() => useCircularBuffer());
+
+      let pending: Promise<void> | undefined;
+      await act(async () => {
+        pending = result.current.startRecording();
+      });
+      for (let i = 0; i < 3; i++) {
+        await act(async () => {
+          jest.advanceTimersByTime(300);
+        });
+      }
+      await act(async () => {
+        await pending;
+      });
+
+      expect(mockedModule.startManualRecording).toHaveBeenCalledTimes(2);
+      expect(useRecordingStore.getState().phase).toBe('recording');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('start() asks for the notification permission on Android (best-effort)', async () => {
+    Platform.OS = 'android';
+    const { requestNotifications } = require('react-native-permissions');
+    const { result } = await renderHook(() => useCircularBuffer());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(requestNotifications).toHaveBeenCalled();
   });
 });

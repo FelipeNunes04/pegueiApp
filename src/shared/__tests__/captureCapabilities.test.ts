@@ -91,3 +91,39 @@ describe('captureCapabilities', () => {
     });
   });
 });
+
+describe('captureCapabilities nearest-option fallback', () => {
+  it('breaks a distance tie in favour of the first supported option the device reported', () => {
+    // 1080p is unsupported; 720p and 4k are both one step away.
+    const lowFirst: CaptureCapabilities = { supportedQualities: ['720p', '4k'], fpsByQuality: {} };
+    const highFirst: CaptureCapabilities = { supportedQualities: ['4k', '720p'], fpsByQuality: {} };
+
+    expect(resolveSupportedQuality(lowFirst, '1080p')).toBe('720p');
+    expect(resolveSupportedQuality(highFirst, '1080p')).toBe('4k');
+  });
+
+  it('picks the closest option even when a farther one is listed after it', () => {
+    const caps: CaptureCapabilities = { supportedQualities: ['1080p', '720p'], fpsByQuality: {} };
+
+    expect(resolveSupportedQuality(caps, '4k')).toBe('1080p');
+  });
+
+  it('falls back upwards for fps when only higher frame rates are supported', () => {
+    const caps: CaptureCapabilities = {
+      supportedQualities: ['4k'],
+      fpsByQuality: { '4k': [30, 60] },
+    };
+
+    expect(resolveSupportedFps(caps, '4k', 24)).toBe(30);
+  });
+
+  it('does not restrict fps for a quality whose fps list is empty', () => {
+    const caps: CaptureCapabilities = {
+      supportedQualities: ['4k'],
+      fpsByQuality: { '4k': [] },
+    };
+
+    expect(isFpsSupported(caps, '4k', 60)).toBe(true);
+    expect(resolveSupportedFps(caps, '4k', 60)).toBe(60);
+  });
+});

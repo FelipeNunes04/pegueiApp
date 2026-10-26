@@ -1,28 +1,34 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Text, View } from 'react-native';
 import { colors } from '../../../shared/theme/colors';
-import type { RecordingPhase } from '../../../shared/types';
+import type { BufferHealth, RecordingPhase } from '../../../shared/types';
+import { PHASE_LABEL, visibleHealthLabel } from '../utils/bufferStatus';
 import { styles } from './BufferIndicator.styles';
 
 interface Props {
   phase: RecordingPhase;
   bufferSeconds: number;
+  /** Native pipeline health (CircularBufferHealth). Defaults to healthy. */
+  health?: BufferHealth;
+  /**
+   * True while pocket mode covers the screen -- the pulse is a JS-driven
+   * Animated.loop, and keeping it ticking behind a black overlay would spend
+   * battery on frames nobody sees.
+   */
+  paused?: boolean;
 }
 
-const PHASE_LABEL: Record<RecordingPhase, string> = {
-  idle: 'Parado',
-  buffering: 'Sempre gravando',
-  recording: 'Gravando',
-  saving: 'Salvando...',
-  error: 'Erro',
-};
-
 /** Compact top-left status badge (scrim + pulsing dot) — communicates "the last N seconds are always being kept" at a glance without a solid top bar. */
-export function BufferIndicator({ phase, bufferSeconds }: Props) {
+export function BufferIndicator({ phase, bufferSeconds, health = 'healthy', paused = false }: Props) {
   const pulse = useRef(new Animated.Value(1)).current;
+  const healthLabel = visibleHealthLabel(phase, health);
+
+  // Pulsing means "all good, frames are flowing" -- so it also stops while
+  // the pipeline reports anything but healthy.
+  const shouldPulse = phase === 'buffering' && !paused && healthLabel === null;
 
   useEffect(() => {
-    if (phase !== 'buffering') {
+    if (!shouldPulse) {
       pulse.setValue(1);
       return undefined;
     }
@@ -44,12 +50,25 @@ export function BufferIndicator({ phase, bufferSeconds }: Props) {
     );
     loop.start();
     return () => loop.stop();
-  }, [phase, pulse]);
+  }, [shouldPulse, pulse]);
 
-  const dotColor = phase === 'error' ? colors.error : colors.success;
+  const dotColor =
+    phase === 'error' || (healthLabel !== null && health === 'interrupted')
+      ? colors.error
+      : healthLabel !== null
+      ? colors.accent
+      : colors.success;
+  const subLabel = healthLabel ? `${bufferSeconds}s · ${healthLabel}` : `${bufferSeconds}s`;
 
   return (
-    <View style={styles.container} testID="buffer-indicator">
+    <View
+      style={styles.container}
+      testID="buffer-indicator"
+      accessible
+      accessibilityLabel={`${PHASE_LABEL[phase]}, últimos ${bufferSeconds} segundos${
+        healthLabel ? `. ${healthLabel}` : ''
+      }`}
+    >
       <Animated.View
         style={[
           styles.dot,
@@ -59,7 +78,9 @@ export function BufferIndicator({ phase, bufferSeconds }: Props) {
       />
       <View>
         <Text style={styles.label}>{PHASE_LABEL[phase]}</Text>
-        <Text style={styles.subLabel}>{bufferSeconds}s</Text>
+        <Text style={styles.subLabel} testID="buffer-indicator-sublabel">
+          {subLabel}
+        </Text>
       </View>
     </View>
   );

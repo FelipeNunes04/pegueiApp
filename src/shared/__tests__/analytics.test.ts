@@ -58,4 +58,25 @@ describe('analytics', () => {
     mockedLogEvent.mockRejectedValueOnce(new Error('offline'));
     expect(() => logClipSaved(1)).not.toThrow();
   });
+
+  it('swallows a rejected analytics call for every event (offline / Firebase unavailable)', async () => {
+    mockedLogEvent.mockRejectedValue(new Error('offline'));
+
+    const calls = [
+      () => logClipSaved(1),
+      () => logClipShared(1),
+      () => logClipDeleted(1),
+      () => logOnboardingCompleted(),
+      () => logOnboardingSkipped(),
+      () => logPermissionDenied('camera', 'denied'),
+      () => logDonationPixCopied(),
+    ];
+    calls.forEach(call => expect(call).not.toThrow());
+
+    // Let every .catch() handler run -- an unhandled rejection here would
+    // surface as a test failure / crash report in the real app.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(mockedLogEvent).toHaveBeenCalledTimes(calls.length);
+    mockedLogEvent.mockResolvedValue(undefined);
+  });
 });

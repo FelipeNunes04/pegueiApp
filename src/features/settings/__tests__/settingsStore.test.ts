@@ -55,4 +55,53 @@ describe('settingsStore', () => {
       expect(parsed.state).toMatchObject({ bufferSeconds: 45, videoQuality: '4k', fps: 60 });
     });
   });
+
+  it('defaults to pocket mode on after 20 s, hardware triggers on and auto-stop "Nunca"', () => {
+    expect(useSettingsStore.getState()).toMatchObject({
+      pocketModeAutoEnabled: true,
+      pocketModeDelaySeconds: 20,
+      hardwareTriggersEnabled: true,
+      autoStopMinutes: 0,
+    });
+  });
+
+  it('updates the pocket-mode, hardware-trigger and auto-stop settings, clamping the delay', () => {
+    const state = useSettingsStore.getState();
+    state.setPocketModeAutoEnabled(false);
+    state.setPocketModeDelaySeconds(30);
+    state.setHardwareTriggersEnabled(false);
+    state.setAutoStopMinutes(120);
+    expect(useSettingsStore.getState()).toMatchObject({
+      pocketModeAutoEnabled: false,
+      pocketModeDelaySeconds: 30,
+      hardwareTriggersEnabled: false,
+      autoStopMinutes: 120,
+    });
+
+    state.setPocketModeDelaySeconds(1);
+    expect(useSettingsStore.getState().pocketModeDelaySeconds).toBe(5);
+    state.setPocketModeDelaySeconds(10_000);
+    expect(useSettingsStore.getState().pocketModeDelaySeconds).toBe(300);
+  });
+
+  // A payload persisted by a build from before these settings existed must
+  // hydrate with the new fields at their defaults, not undefined.
+  it('hydrates an older persisted payload with defaults for the new fields', async () => {
+    await AsyncStorage.setItem(
+      'peguei-settings',
+      JSON.stringify({ state: { bufferSeconds: 45, videoQuality: '720p', fps: 24 }, version: 0 }),
+    );
+
+    await useSettingsStore.persist.rehydrate();
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      bufferSeconds: 45,
+      videoQuality: '720p',
+      fps: 24,
+      pocketModeAutoEnabled: true,
+      pocketModeDelaySeconds: 20,
+      hardwareTriggersEnabled: true,
+      autoStopMinutes: 0,
+    });
+  });
 });

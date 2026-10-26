@@ -8,6 +8,7 @@ import type {
   RootStackParamList,
 } from '../../shared/types';
 import { PermissionActionButton } from './components/PermissionActionButton';
+import { BatteryOptimizationCard } from './components/BatteryOptimizationCard';
 import { styles } from './PermissionsScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Permissions'>;
@@ -78,6 +79,9 @@ export function PermissionsScreen({ navigation }: Props) {
           />
         </View>
       ))}
+      {/* Android only (renders nothing elsewhere) and never part of
+          allGranted -- a recommendation, not a requirement. */}
+      <BatteryOptimizationCard />
       {!allGranted && (
         <Text style={styles.hint}>
           Se uma permissão foi bloqueada permanentemente, abra as configurações

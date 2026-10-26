@@ -3,3 +3,4 @@ android/.gradle
 ios/build
 ios/Pods
 node_modules
+coverage

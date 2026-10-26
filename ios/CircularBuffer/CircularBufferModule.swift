@@ -18,8 +18,13 @@ class CircularBufferModule: RCTEventEmitter {
     // Promise left to reject, so they're emitted as a JS event instead.
     // useCircularBuffer.ts subscribes via circularBufferEvents and routes
     // this into the same error banner as a rejected saveClip().
+    // CircularBufferHealth ({ state, reason? }, transitions only) and
+    // CircularBufferHardwareTrigger ({ source }) follow the same pattern --
+    // see the bridge contract in
+    // docs/plans/2026-10-21-reliability-battery-triggers.md. RCTEventEmitter
+    // refuses (asserts in debug) to send any event name not listed here.
     override func supportedEvents() -> [String]! {
-        return ["CircularBufferError"]
+        return ["CircularBufferError", "CircularBufferHealth", "CircularBufferHardwareTrigger"]
     }
 
     private var moviesDir: URL {
@@ -56,9 +61,62 @@ class CircularBufferModule: RCTEventEmitter {
     @objc(stopBuffering:rejecter:)
     func stopBuffering(resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         CameraEncoderController.shared.stop()
+        // Defensive pocket-mode exit: if CameraScreen unmounts (and stops
+        // the buffer) while its pocket overlay is up, nothing on the JS side
+        // is left to call setPocketMode(false) -- and an app-set screen
+        // brightness on iOS persists until the device locks, even across
+        // leaving the app. Restoring here is a no-op when pocket mode is off.
+        CameraEncoderController.shared.setPreviewSuppressed(false)
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = false
+            PocketModeBrightness.shared.setEnabled(false)
         }
+        resolve(nil)
+    }
+
+    // Pocket mode: the phone is buffering face-down/in a pocket with a black
+    // JS overlay on top. Dimming the backlight is the actual battery win
+    // (an OLED showing black is already cheap, but the backlight/driver and
+    // the compositor still aren't free), and disabling the preview layer's
+    // connection stops compositing camera frames nobody can see. Capture,
+    // encoding and the ring buffer are deliberately untouched -- this must
+    // never cost pre-roll.
+    @objc(setPocketMode:resolver:rejecter:)
+    func setPocketMode(enabled: Bool, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        CameraEncoderController.shared.setPreviewSuppressed(enabled)
+        DispatchQueue.main.async {
+            PocketModeBrightness.shared.setEnabled(enabled)
+            resolve(nil)
+        }
+    }
+
+    // Volume up/down and the Camera Control button as record start/stop
+    // triggers, via AVCaptureEventInteraction (iOS 17.2+; resolves as a
+    // no-op below that). See HardwareTriggerCoordinator for what can and
+    // can't be told apart.
+    @objc(setHardwareTriggerEnabled:resolver:rejecter:)
+    func setHardwareTriggerEnabled(enabled: Bool, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async { [weak self] in
+            let coordinator = HardwareTriggerCoordinator.shared
+            coordinator.onTrigger = { [weak self] source in
+                self?.sendEvent(withName: "CircularBufferHardwareTrigger", body: ["source": source])
+            }
+            coordinator.setEnabled(enabled)
+            resolve(nil)
+        }
+    }
+
+    // Android-only concepts (Doze/battery-optimization exemption). iOS has
+    // no equivalent user-grantable exemption, and capture is suspended in
+    // the background regardless, so the honest answer for the JS card is
+    // "nothing to fix here" -- it stays hidden on iOS.
+    @objc(isIgnoringBatteryOptimizations:rejecter:)
+    func isIgnoringBatteryOptimizations(resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        resolve(true)
+    }
+
+    @objc(openBatteryOptimizationSettings:rejecter:)
+    func openBatteryOptimizationSettings(resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         resolve(nil)
     }
 
@@ -221,5 +279,78 @@ class CircularBufferModule: RCTEventEmitter {
 extension CircularBufferModule: CameraEncoderControllerDelegate {
     func cameraEncoderController(_ controller: CameraEncoderController, didFailWithCode code: String, message: String) {
         sendEvent(withName: "CircularBufferError", body: ["code": code, "message": message])
+    }
+
+    func cameraEncoderController(_ controller: CameraEncoderController, didChangeHealth state: BufferHealthState, reason: String?) {
+        var body: [String: Any] = ["state": state.rawValue]
+        if let reason {
+            body["reason"] = reason
+        }
+        sendEvent(withName: "CircularBufferHealth", body: body)
+    }
+}
+
+/// Screen-brightness half of pocket mode. Main thread only.
+///
+/// iOS keeps an app-set `UIScreen.brightness` until the device locks --
+/// *including after the app leaves the foreground* -- so a naive "dim on
+/// enter, restore on exit" leaves the user's home screen at 1% if they
+/// switch apps while pocket mode is on. Hence the resign/become-active
+/// observers: the user's brightness is restored whenever the app stops
+/// being active and re-dimmed when it comes back with pocket mode still on.
+/// The screen is reached through the active window scene rather than
+/// `UIScreen.main`, which is deprecated as of iOS 16 (the deployment target).
+final class PocketModeBrightness {
+    static let shared = PocketModeBrightness()
+
+    private static let dimmedBrightness: CGFloat = 0.01
+
+    private var isEnabled = false
+    private var savedBrightness: CGFloat?
+    private var observers: [NSObjectProtocol] = []
+
+    private init() {}
+
+    func setEnabled(_ enabled: Bool) {
+        isEnabled = enabled
+        if enabled {
+            installObserversIfNeeded()
+            if UIApplication.shared.applicationState == .active {
+                dim()
+            }
+        } else {
+            restore()
+        }
+    }
+
+    private var screen: UIScreen? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
+    }
+
+    private func dim() {
+        guard let screen else { return }
+        if savedBrightness == nil {
+            savedBrightness = screen.brightness
+        }
+        screen.brightness = Self.dimmedBrightness
+    }
+
+    private func restore() {
+        guard let saved = savedBrightness else { return }
+        savedBrightness = nil
+        screen?.brightness = saved
+    }
+
+    private func installObserversIfNeeded() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.restore()
+        })
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.isEnabled else { return }
+            self.dim()
+        })
     }
 }

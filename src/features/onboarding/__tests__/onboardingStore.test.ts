@@ -43,3 +43,43 @@ describe('onboardingStore', () => {
     ).resolves.toBe('true');
   });
 });
+
+describe('onboardingStore storage failures', () => {
+  beforeEach(() => {
+    useOnboardingStore.setState({ hydrated: false, hasCompletedOnboarding: false });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('hydrate() still finishes (as not completed) when storage cannot be read, so the app never hangs on a blank screen', async () => {
+    jest.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('disk I/O'));
+
+    await useOnboardingStore.getState().hydrate();
+
+    const state = useOnboardingStore.getState();
+    expect(state.hydrated).toBe(true);
+    expect(state.hasCompletedOnboarding).toBe(false);
+  });
+
+  it('hydrate() treats any stored value other than "true" as not completed', async () => {
+    await AsyncStorage.setItem('peguei:onboardingCompleted', 'false');
+
+    await useOnboardingStore.getState().hydrate();
+
+    expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(false);
+  });
+
+  it('completeOnboarding() still flips the in-memory flag when persisting fails', async () => {
+    const setItem = jest
+      .spyOn(AsyncStorage, 'setItem')
+      .mockRejectedValueOnce(new Error('disk full'));
+
+    expect(() => useOnboardingStore.getState().completeOnboarding()).not.toThrow();
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(setItem).toHaveBeenCalled();
+    expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
+  });
+});

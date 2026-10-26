@@ -37,10 +37,28 @@ export interface CaptureCapabilities {
 export const BUFFER_SECONDS_MIN = 15;
 export const BUFFER_SECONDS_MAX = 60;
 
+/**
+ * "Desligar buffer após inatividade" options, in minutes. 0 means "Nunca"
+ * (the default) -- kept as a number rather than null so the persisted JSON
+ * and the pill list in SettingsScreen stay trivially comparable.
+ */
+export type AutoStopMinutes = 0 | 30 | 60 | 120;
+
+export const AUTO_STOP_OPTIONS: AutoStopMinutes[] = [0, 30, 60, 120];
+
+/** Seconds without touches before pocket mode turns on by itself (when enabled). */
+export const POCKET_MODE_DELAY_OPTIONS = [10, 20, 30, 60] as const;
+
 export interface AppSettings {
   bufferSeconds: number;
   videoQuality: VideoQuality;
   fps: VideoFps;
+  /** Auto-enter pocket mode (black screen, buffer still running) after pocketModeDelaySeconds without touches. */
+  pocketModeAutoEnabled: boolean;
+  pocketModeDelaySeconds: number;
+  /** Volume buttons / Bluetooth shutter remotes / iPhone Camera Control toggle recording. */
+  hardwareTriggersEnabled: boolean;
+  autoStopMinutes: AutoStopMinutes;
 }
 
 export type PermissionKey = 'camera' | 'storage' | 'microphone';
@@ -54,6 +72,15 @@ export type PermissionStatus = 'unknown' | 'granted' | 'denied' | 'blocked';
  * after stop, before the clip is confirmed saved.
  */
 export type RecordingPhase = 'idle' | 'buffering' | 'recording' | 'saving' | 'error';
+
+/**
+ * Native pipeline health, pushed by the CircularBufferHealth event (only on
+ * transitions). Orthogonal to RecordingPhase: the buffer can be 'buffering'
+ * while 'throttled' (reduced fps from thermal pressure) or 'recovering'
+ * (watchdog rebuilding the encoder). See
+ * docs/plans/2026-10-21-reliability-battery-triggers.md.
+ */
+export type BufferHealth = 'healthy' | 'recovering' | 'interrupted' | 'throttled';
 
 /**
  * Always 'manual' right now -- there is no other capture trigger in this

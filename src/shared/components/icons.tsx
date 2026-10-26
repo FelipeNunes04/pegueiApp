@@ -122,3 +122,17 @@ export function ManualClipIcon({ size = 14, color = '#fff' }: IconProps) {
     </Svg>
   );
 }
+
+/**
+ * Pocket mode toggle: a phone outline with a crescent moon on its screen —
+ * reads as "screen goes dark" without implying the camera turns off (a
+ * plain power/eye-off glyph would suggest recording stops, which it doesn't).
+ */
+export function PocketModeIcon({ size = 20, color = '#fff' }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Rect x={6} y={2.5} width={12} height={19} rx={2.5} stroke={color} strokeWidth={1.8} fill="none" />
+      <Path d="M13.6 8.6 a3.4 3.4 0 1 0 1.8 5.6 a2.8 2.8 0 0 1 -1.8 -5.6 Z" fill={color} />
+    </Svg>
+  );
+}

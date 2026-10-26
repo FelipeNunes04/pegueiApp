@@ -28,8 +28,60 @@ struct CaptureCapabilities {
     let fpsByQuality: [String: [Int]]
 }
 
+/// TEMPORARY diagnostics for the "Buffer vazio" investigation (2026-10-21):
+/// appends timestamped lines to Documents/peguei-diagnostics.log so a
+/// long on-device session can be pulled back with
+/// `xcrun devicectl device copy from --domain-type appDataContainer`.
+/// Remove once the root cause is confirmed.
+enum PegueiDiag {
+    private static let queue = DispatchQueue(label: "com.peguei.diag")
+    private static let formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let url: URL = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("peguei-diagnostics.log")
+
+    static func log(_ message: String) {
+        let line = "\(formatter.string(from: Date())) \(message)\n"
+        NSLog("[PegueiDiag] %@", message)
+        queue.async {
+            guard let data = line.data(using: .utf8) else { return }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
+}
+
 protocol CameraEncoderControllerDelegate: AnyObject {
     func cameraEncoderController(_ controller: CameraEncoderController, didFailWithCode code: String, message: String)
+    /// Fired only on transitions (see `BufferHealthTracker`), from
+    /// sessionQueue. Becomes the `CircularBufferHealth` JS event.
+    func cameraEncoderController(_ controller: CameraEncoderController, didChangeHealth state: BufferHealthState, reason: String?)
+}
+
+/// Thread-safe one-value box for handing a result out of an `@Sendable`
+/// completion handler to a thread blocked on a semaphore (finalizeSave's
+/// save verification).
+private final class TrackCountBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func set(_ newValue: Int) {
+        lock.lock(); value = newValue; lock.unlock()
+    }
+
+    func get() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
 }
 
 /// Owns the AVCaptureSession, a VTCompressionSession (H.264 hardware
@@ -80,6 +132,171 @@ final class CameraEncoderController: NSObject {
     // constant.
     private var activeFps: Int = 30
 
+    // MARK: Reliability state (2026-10-21, see
+    // docs/plans/2026-10-21-reliability-battery-triggers.md)
+    //
+    // Guarded by stateLock (touched from the capture/encoder callback
+    // threads as well as sessionQueue/main):
+
+    /// Bumped every time `compressionSession` is replaced (start, rebuild,
+    /// teardown). Each frame is submitted with the generation current at
+    /// that moment (as its `sourceFrameRefcon`), and output from any older
+    /// generation is discarded -- the one mechanism that guarantees frames
+    /// from two different encoder sessions (two different SPS/PPS format
+    /// descriptions) never end up in the same ring buffer or clip. Starts
+    /// at 0 and the first session gets 1, so a real generation is never the
+    /// nil pointer.
+    private var encoderGeneration: UInt = 0
+    private var encoderErrorPolicy = EncoderErrorPolicy()
+    /// `ProcessInfo.systemUptime` of the newest frame the *current*
+    /// encoder produced -- what the watchdog measures stalls against.
+    private var lastEncodedFrameUptime: TimeInterval?
+    /// Mirrors UIApplication's active state (set from main-thread
+    /// notifications): the watchdog and the startRunning retries stand
+    /// down while the app isn't active, since iOS suspends capture for
+    /// inactive/background apps by design and tearing things down over
+    /// that would only burn power and pre-roll.
+    private var isAppActive = true
+    /// Pocket mode: the preview layer's connection is disabled so nothing
+    /// is composited, while capture/encode keep running untouched.
+    private var previewSuppressed = false
+    /// A manual recording that a rebuild/restart finalized early, waiting to
+    /// be handed to JS by its `stopManualRecording` call.
+    private var detachedSave: DetachedSave?
+
+    // sessionQueue-confined (only ever read/written from blocks running on
+    // sessionQueue, so no lock):
+
+    private var watchdog = FrameFlowWatchdog()
+    private var healthTracker = BufferHealthTracker()
+    private var watchdogTimer: DispatchSourceTimer?
+    private var isSessionInterrupted = false
+    /// Set when a recovery action starts; cleared (-> `healthy`) by the
+    /// first encoded frame that arrives after it.
+    private var recoveringSince: TimeInterval?
+    /// After an ordinary start, `healthy` is announced on the first encoded
+    /// frame rather than optimistically at startRunning().
+    private var awaitingInitialHealth = false
+    /// Set by `restartPipeline` for the one `openCameraAndStartOnSessionQueue`
+    /// call it makes, so that start keeps the watchdog's escalation stage.
+    private var isRecoveryRestart = false
+    /// startRunning() retry chain after a runtime error: a token so stale
+    /// delayed attempts no-op once a newer chain / teardown has happened.
+    private var sessionRetryToken: UInt = 0
+    private var isSessionRetryInFlight = false
+    /// A runtime error arrived while the app wasn't active: retry once it is.
+    private var needsSessionRestartOnActive = false
+    /// Thermal step-down: the user's configured fps for the running
+    /// pipeline, the rate currently applied to the device, and the latest
+    /// system-pressure level.
+    private var configuredFps = 30
+    private var appliedFps = 30
+    /// The config the *running* pipeline was opened with. `pendingConfig`
+    /// can be replaced by a later `configureAndArm` without a restart, so
+    /// an encoder-only rebuild must size the new VTCompressionSession from
+    /// this instead, to keep matching the capture format actually running.
+    private var activeConfig: BufferConfig?
+    private var thermalLevel: ThermalPressureLevel = .nominal
+    private var reliabilityObservers: [NSObjectProtocol] = []
+
+    private static var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    // TEMPORARY diagnostics, see PegueiDiag.
+    private let diagLock = NSLock()
+    private var diagCapturedFrames = 0
+    private var diagEncodedFrames = 0
+    private var diagEncodeErrors = 0
+    private var diagLastEncodeError: OSStatus = noErr
+    private var diagObservers: [NSObjectProtocol] = []
+    private var diagPressureObservation: NSKeyValueObservation?
+    private var diagTimer: DispatchSourceTimer?
+
+    private override init() {
+        super.init()
+        installDiagnostics()
+        installReliabilityMonitoring()
+    }
+
+    private func installDiagnostics() {
+        PegueiDiag.log("diag installed, thermal=\(ProcessInfo.processInfo.thermalState.rawValue)")
+        let center = NotificationCenter.default
+        diagObservers.append(center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            PegueiDiag.log("session RUNTIME ERROR code=\(error?.code ?? 0) \(error?.localizedDescription ?? "nil")")
+        })
+        diagObservers.append(center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { note in
+            let reason = note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int ?? -1
+            PegueiDiag.log("session INTERRUPTED reason=\(reason)")
+        })
+        diagObservers.append(center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { _ in
+            PegueiDiag.log("session interruption ended")
+        })
+        diagObservers.append(center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { _ in
+            PegueiDiag.log("session didStartRunning")
+        })
+        diagObservers.append(center.addObserver(forName: .AVCaptureSessionDidStopRunning, object: session, queue: nil) { _ in
+            PegueiDiag.log("session didStopRunning")
+        })
+        diagObservers.append(center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { _ in
+            PegueiDiag.log("thermalState -> \(ProcessInfo.processInfo.thermalState.rawValue)")
+        })
+        diagObservers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            PegueiDiag.log("app didEnterBackground")
+        })
+        diagObservers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { _ in
+            PegueiDiag.log("app willEnterForeground")
+        })
+        diagObservers.append(center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { _ in
+            PegueiDiag.log("MEMORY WARNING")
+        })
+        diagObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { note in
+            let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 99
+            PegueiDiag.log("audio session interruption type=\(type)")
+        })
+        diagObservers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { _ in
+            PegueiDiag.log("MEDIA SERVICES WERE RESET")
+        })
+
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "com.peguei.diag.heartbeat"))
+        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.setEventHandler { [weak self] in self?.logHeartbeat() }
+        timer.resume()
+        diagTimer = timer
+    }
+
+    private func logHeartbeat() {
+        diagLock.lock()
+        let captured = diagCapturedFrames, encoded = diagEncodedFrames
+        let errors = diagEncodeErrors, lastError = diagLastEncodeError
+        diagLock.unlock()
+        stateLock.lock()
+        let running = isRunning
+        let ringSize = ringBuffer?.size ?? -1
+        let audioSize = audioRingBuffer?.size ?? -1
+        let hasCompression = compressionSession != nil
+        stateLock.unlock()
+        PegueiDiag.log("heartbeat isRunning=\(running) session.isRunning=\(session.isRunning) interrupted=\(session.isInterrupted) captured=\(captured) encoded=\(encoded) encodeErrors=\(errors) lastErr=\(lastError) ring=\(ringSize) audioRing=\(audioSize) vt=\(hasCompression) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) mem=\(Self.memoryFootprintMB())MB")
+    }
+
+    private static func memoryFootprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+
+    private func observeSystemPressure(of device: AVCaptureDevice) {
+        diagPressureObservation = device.observe(\.systemPressureState, options: [.initial, .new]) { [weak self] device, _ in
+            let state = device.systemPressureState
+            PegueiDiag.log("systemPressure level=\(state.level.rawValue) factors=\(state.factors.rawValue)")
+            self?.systemPressureChanged(to: state.level, on: device)
+        }
+    }
+
     /// A manual recording in flight: `headFrames` is the pre-roll snapshot
     /// taken from the ring buffer the moment recording started; `tailFrames`
     /// keeps accumulating every frame the encoder produces for as long as
@@ -97,6 +314,38 @@ final class CameraEncoderController: NSObject {
     private var pendingSave: PendingSave?
     private let stateLock = NSLock()
 
+    private enum SaveOutcome {
+        case saved(path: String, durationSeconds: Double)
+        case failed(code: String, message: String)
+    }
+
+    private struct SaveWaiter {
+        let onSaved: (String, Double) -> Void
+        let onFailed: (String, String) -> Void
+    }
+
+    /// A manual recording cut short by `rebuildEncoder`/`restartPipeline`:
+    /// it's finalized immediately with the frames it already has (all from
+    /// one encoder generation) rather than continuing across the format
+    /// change. JS still believes it's recording, so the result is parked
+    /// here until its `stopManualRecording` arrives -- whichever of
+    /// "finalize finished" / "JS asked" happens second delivers it.
+    /// `outputURL` identifies it, so a late-finishing finalize can't fill
+    /// the slot of a newer detached clip.
+    private struct DetachedSave {
+        let outputURL: URL
+        var outcome: SaveOutcome?
+        var waiter: SaveWaiter?
+    }
+
+    /// The truth, not the intent: `isRunning` is set to false whenever the
+    /// pipeline is torn down -- including when the watchdog gives up after
+    /// its recovery ladder failed (`giveUp`) and when a recovery restart
+    /// fails to reopen the camera -- so `useCircularBuffer.ts`'s AppState
+    /// handler, which only restarts on `false`, actually restarts a dead
+    /// buffer. While a recovery is still in progress it stays `true`
+    /// (the native side is actively bringing frames back; a JS restart
+    /// would only race it).
     var isBuffering: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
         return isRunning
@@ -152,6 +401,10 @@ final class CameraEncoderController: NSObject {
             self.stateLock.unlock()
             if shouldStart {
                 self.openCameraAndStart()
+            } else {
+                // Already running (e.g. the view re-entered the window):
+                // a re-attached layer still needs pocket mode's state.
+                self.applyPreviewSuppression()
             }
         }
     }
@@ -178,201 +431,270 @@ final class CameraEncoderController: NSObject {
 
     private func openCameraAndStart() {
         sessionQueue.async { [weak self] in
-            guard let self else { return }
-            guard let config = self.pendingConfig else { return }
-
-            // ringBuffer/audioRingBuffer are only ever *created* in
-            // configureAndArm(), which runs exactly once (CameraScreen's
-            // initial mount). Every restart after that point (navigating
-            // away detaches the preview -> stopInternal() nils both
-            // buffers; navigating back reattaches -> this method) brings
-            // the capture session back correctly but would leave the
-            // buffers permanently nil forever after if nothing here
-            // recreated them. Fresh buffers here (not reused stale ones)
-            // also matters because they'd otherwise hold frames encoded
-            // under the *previous* session's formatDescription/compression
-            // session, which finalizeSave assumes is uniform across every
-            // frame.
-            self.stateLock.lock()
-            if self.ringBuffer == nil {
-                self.ringBuffer = FrameRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
-            }
-            if self.audioRingBuffer == nil {
-                self.audioRingBuffer = AudioSampleRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
-            }
-            self.stateLock.unlock()
-
-            let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
-            guard authStatus == .authorized else {
-                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.cameraPermission, message: "Permissão de câmera não concedida.")
-                return
-            }
-
-            let audioAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-            guard audioAuthStatus == .authorized else {
-                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.microphonePermission, message: "Permissão de microfone não concedida.")
-                return
-            }
-
-            // AVCaptureSession configures the shared audio session's category
-            // internally once an audio input is attached, but explicitly
-            // setting it first is more reliable across devices/OS versions.
-            // Non-fatal if it fails -- the session can often still capture
-            // audio; if not, the audio delegate callback simply never fires
-            // and the clip degrades gracefully to video-only (see finalizeSave).
-            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth])
-            try? AVAudioSession.sharedInstance().setActive(true)
-
-            guard let device = Self.pickBackCameraDevice() else {
-                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Nenhuma câmera traseira disponível.")
-                return
-            }
-
-            self.session.beginConfiguration()
-            self.session.inputs.forEach { self.session.removeInput($0) }
-            self.session.outputs.forEach { self.session.removeOutput($0) }
-
-            do {
-                let input = try AVCaptureDeviceInput(device: device)
-                guard self.session.canAddInput(input) else {
-                    self.session.commitConfiguration()
-                    self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.cameraBusy, message: "Não foi possível conectar à câmera. Verifique se outro app não está usando-a.")
-                    return
-                }
-                self.session.addInput(input)
-                self.deviceLock.lock()
-                self.activeDevice = device
-                self.deviceLock.unlock()
-
-                // Picking an explicit AVCaptureDevice.Format (rather than
-                // leaving the session on a fixed preset) is what actually
-                // makes the "4K/1080p/720p" quality setting take effect: a
-                // hardcoded `sessionPreset = .high` previously meant every
-                // quality setting captured frames at whatever resolution
-                // `.high` happened to map to on the device, while only the
-                // encoder's *declared* dimensions changed -- never a real
-                // resolution change. `.inputPriority` tells the session to
-                // respect the device's activeFormat instead of silently
-                // overriding it.
-                guard let format = Self.pickFormat(for: device, width: config.width, height: config.height, fps: config.fps) else {
-                    self.session.commitConfiguration()
-                    self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Resolução \(config.width)x\(config.height) não suportada por esta câmera.")
-                    return
-                }
-                try device.lockForConfiguration()
-                device.activeFormat = format
-                if let range = format.videoSupportedFrameRateRanges.first(where: { Double(config.fps) >= $0.minFrameRate && Double(config.fps) <= $0.maxFrameRate }) {
-                    let duration = CMTimeMake(value: 1, timescale: Int32(config.fps))
-                    device.activeVideoMinFrameDuration = duration
-                    device.activeVideoMaxFrameDuration = duration
-                }
-                // No supported range covering the requested fps at this
-                // resolution shouldn't normally happen since pickFormat
-                // already filters for this -- if it does, the device's
-                // default frame duration for this format is left as-is,
-                // but activeFps still records what was requested since
-                // that's what finalizeSave stamps the clip's per-frame
-                // duration metadata with.
-                // Video HDR fuses/extends multiple exposures continuously
-                // while the sensor is running -- a real, ongoing power draw
-                // for an app whose whole point is to keep the camera open
-                // for long stretches, not a one-off cost. Traded off
-                // deliberately for battery life over slightly less dynamic
-                // range in high-contrast scenes. Guarded by
-                // isVideoHDRSupported since setting isVideoHDREnabled on an
-                // unsupported format throws, and automaticallyAdjusts...
-                // must be turned off first or setting isVideoHDREnabled
-                // directly also throws.
-                if format.isVideoHDRSupported {
-                    device.automaticallyAdjustsVideoHDREnabled = false
-                    device.isVideoHDREnabled = false
-                }
-                device.unlockForConfiguration()
-                self.stateLock.lock()
-                self.activeFps = config.fps
-                self.stateLock.unlock()
-                self.session.sessionPreset = .inputPriority
-
-                self.videoDataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
-                self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
-                self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataOutputQueue)
-                guard self.session.canAddOutput(self.videoDataOutput) else {
-                    self.session.commitConfiguration()
-                    self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Não foi possível configurar a saída de vídeo.")
-                    return
-                }
-                self.session.addOutput(self.videoDataOutput)
-
-                // Audio is best-effort: if no mic is available or it can't be
-                // attached, the video-only path above has already succeeded,
-                // so we simply skip adding an audio track rather than failing
-                // the whole buffering session over it.
-                if let audioDevice = AVCaptureDevice.default(for: .audio) {
-                    if let audioInput = try? AVCaptureDeviceInput(device: audioDevice), self.session.canAddInput(audioInput) {
-                        self.session.addInput(audioInput)
-                        self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataOutputQueue)
-                        if self.session.canAddOutput(self.audioDataOutput) {
-                            self.session.addOutput(self.audioDataOutput)
-                        }
-                    }
-                }
-
-                self.session.commitConfiguration()
-            } catch {
-                self.session.commitConfiguration()
-                let nsError = error as NSError
-                let busy = nsError.code == AVError.deviceIsNotAvailableInBackground.rawValue
-                let code = busy ? CircularBufferErrorCode.cameraBusy : CircularBufferErrorCode.encoderInitFailed
-                self.delegate?.cameraEncoderController(self, didFailWithCode: code, message: "Falha ao abrir a câmera: \(error.localizedDescription)")
-                return
-            }
-
-            guard self.setUpCompressionSession(config: config) else {
-                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Falha ao iniciar o encoder H.264.")
-                return
-            }
-
-            self.session.startRunning()
-            self.stateLock.lock()
-            self.isRunning = true
-            self.stateLock.unlock()
+            self?.openCameraAndStartOnSessionQueue()
         }
     }
 
-    /// Prefers a virtual multi-lens back camera (triple: ultra-wide+wide+tele,
-    /// then dual-wide: ultra-wide+wide) so `videoZoomFactor` sweeps across
-    /// the device's full switch-over range (see
-    /// `virtualDeviceSwitchOverVideoZoomFactors`) with better-than-digital
-    /// quality at the higher pill levels (2x and up). Falls back to the
-    /// plain single-lens wide camera (this app's previous, only, behavior)
-    /// on older/cheaper devices that don't expose a virtual device at all.
-    /// `AVCaptureDevice.default(_:for:position:)` returns nil (not a crash)
-    /// for a type the device doesn't have, so this is a plain ordered
-    /// fallback, not a discovery/filter step.
-    ///
-    /// **Does NOT get ultra-wide (sub-1.0) zoom working** -- see
-    /// DECISIONS.md "Camera zoom (0.5x correction)" for why: confirmed on a
-    /// physical iPhone with a triple camera that `minAvailableVideoZoomFactor`
-    /// stays clamped to `1.0` for every single format this device offers
-    /// (even though `constituentDevices` does include the ultra-wide lens),
-    /// and forcing `videoZoomFactor` below `1.0` anyway crashes with
-    /// `NSRangeException`. `hasUltraWide` in `zoomInfo()` below will
-    /// therefore always report `false` on a plain (non-multicam)
-    /// `AVCaptureSession` like this one, regardless of the physical device --
-    /// this is not a per-device hardware check bug, it's an architecture
-    /// constraint.
-    private static func pickBackCameraDevice() -> AVCaptureDevice? {
-        let candidateTypes: [AVCaptureDevice.DeviceType] = [
-            .builtInTripleCamera,
-            .builtInDualWideCamera,
-            .builtInWideAngleCamera,
-        ]
-        for type in candidateTypes {
-            if let device = AVCaptureDevice.default(type, for: .video, position: .back) {
-                return device
-            }
+    /// The actual pipeline bring-up. Must run on `sessionQueue` -- split out
+    /// of `openCameraAndStart()` so the recovery paths (`restartPipeline`),
+    /// which already run on that queue, can tear down and reopen
+    /// synchronously in one block instead of queueing two separate blocks
+    /// that other work could interleave with.
+    private func openCameraAndStartOnSessionQueue() {
+        // Consumed up front so every early-return failure path below also
+        // clears it -- a stale `true` would make the *next* ordinary start
+        // skip resetting the watchdog/health state.
+        let isRecoveryRestart = self.isRecoveryRestart
+        self.isRecoveryRestart = false
+
+        self.stateLock.lock()
+        let pendingConfig = self.pendingConfig
+        self.stateLock.unlock()
+        guard let config = pendingConfig else { return }
+
+        // ringBuffer/audioRingBuffer are only ever *created* in
+        // configureAndArm(), which runs exactly once (CameraScreen's
+        // initial mount). Every restart after that point (navigating
+        // away detaches the preview -> stopInternal() nils both
+        // buffers; navigating back reattaches -> this method) brings
+        // the capture session back correctly but would leave the
+        // buffers permanently nil forever after if nothing here
+        // recreated them. Fresh buffers here (not reused stale ones)
+        // also matters because they'd otherwise hold frames encoded
+        // under the *previous* session's formatDescription/compression
+        // session, which finalizeSave assumes is uniform across every
+        // frame.
+        self.stateLock.lock()
+        if self.ringBuffer == nil {
+            self.ringBuffer = FrameRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
         }
-        return nil
+        if self.audioRingBuffer == nil {
+            self.audioRingBuffer = AudioSampleRingBuffer(windowUs: Int64(config.bufferSeconds) * 1_000_000)
+        }
+        self.stateLock.unlock()
+
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        guard authStatus == .authorized else {
+            self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.cameraPermission, message: "Permissão de câmera não concedida.")
+            return
+        }
+
+        let audioAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        guard audioAuthStatus == .authorized else {
+            self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.microphonePermission, message: "Permissão de microfone não concedida.")
+            return
+        }
+
+        // AVCaptureSession configures the shared audio session's category
+        // internally once an audio input is attached, but explicitly
+        // setting it first is more reliable across devices/OS versions.
+        // Non-fatal if it fails -- the session can often still capture
+        // audio; if not, the audio delegate callback simply never fires
+        // and the clip degrades gracefully to video-only (see finalizeSave).
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth])
+        try? AVAudioSession.sharedInstance().setActive(true)
+
+        guard let device = Self.pickBackCameraDevice() else {
+            self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Nenhuma câmera traseira disponível.")
+            return
+        }
+
+        self.session.beginConfiguration()
+        self.session.inputs.forEach { self.session.removeInput($0) }
+        self.session.outputs.forEach { self.session.removeOutput($0) }
+
+        do {
+            let input = try AVCaptureDeviceInput(device: device)
+            guard self.session.canAddInput(input) else {
+                self.session.commitConfiguration()
+                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.cameraBusy, message: "Não foi possível conectar à câmera. Verifique se outro app não está usando-a.")
+                return
+            }
+            self.session.addInput(input)
+            self.deviceLock.lock()
+            self.activeDevice = device
+            self.deviceLock.unlock()
+            self.observeSystemPressure(of: device)
+            PegueiDiag.log("openCameraAndStart device=\(device.deviceType.rawValue) \(config.width)x\(config.height)@\(config.fps) buffer=\(config.bufferSeconds)s")
+
+            // Picking an explicit AVCaptureDevice.Format (rather than
+            // leaving the session on a fixed preset) is what actually
+            // makes the "4K/1080p/720p" quality setting take effect: a
+            // hardcoded `sessionPreset = .high` previously meant every
+            // quality setting captured frames at whatever resolution
+            // `.high` happened to map to on the device, while only the
+            // encoder's *declared* dimensions changed -- never a real
+            // resolution change. `.inputPriority` tells the session to
+            // respect the device's activeFormat instead of silently
+            // overriding it.
+            guard let format = Self.pickFormat(for: device, width: config.width, height: config.height, fps: config.fps) else {
+                self.session.commitConfiguration()
+                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Resolução \(config.width)x\(config.height) não suportada por esta câmera.")
+                return
+            }
+            try device.lockForConfiguration()
+            device.activeFormat = format
+            if let range = format.videoSupportedFrameRateRanges.first(where: { Double(config.fps) >= $0.minFrameRate && Double(config.fps) <= $0.maxFrameRate }) {
+                let duration = CMTimeMake(value: 1, timescale: Int32(config.fps))
+                device.activeVideoMinFrameDuration = duration
+                device.activeVideoMaxFrameDuration = duration
+            }
+            // No supported range covering the requested fps at this
+            // resolution shouldn't normally happen since pickFormat
+            // already filters for this -- if it does, the device's
+            // default frame duration for this format is left as-is,
+            // but activeFps still records what was requested since
+            // that's what finalizeSave stamps the clip's per-frame
+            // duration metadata with.
+            // Video HDR fuses/extends multiple exposures continuously
+            // while the sensor is running -- a real, ongoing power draw
+            // for an app whose whole point is to keep the camera open
+            // for long stretches, not a one-off cost. Traded off
+            // deliberately for battery life over slightly less dynamic
+            // range in high-contrast scenes. Guarded by
+            // isVideoHDRSupported since setting isVideoHDREnabled on an
+            // unsupported format throws, and automaticallyAdjusts...
+            // must be turned off first or setting isVideoHDREnabled
+            // directly also throws.
+            if format.isVideoHDRSupported {
+                device.automaticallyAdjustsVideoHDREnabled = false
+                device.isVideoHDREnabled = false
+            }
+            device.unlockForConfiguration()
+            self.stateLock.lock()
+            self.activeFps = config.fps
+            self.stateLock.unlock()
+            // Thermal step-down baseline: the KVO `.initial` callback that
+            // `observeSystemPressure` queued above runs right after this
+            // block and re-applies a reduced rate if the device is already
+            // hot -- comparing against these two values.
+            self.configuredFps = config.fps
+            self.appliedFps = config.fps
+            self.activeConfig = config
+            self.session.sessionPreset = .inputPriority
+
+            self.videoDataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+            self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
+            self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataOutputQueue)
+            guard self.session.canAddOutput(self.videoDataOutput) else {
+                self.session.commitConfiguration()
+                self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Não foi possível configurar a saída de vídeo.")
+                return
+            }
+            self.session.addOutput(self.videoDataOutput)
+
+            // Video stabilization off, explicitly (battery pass,
+            // 2026-10-21): the default for a data-output connection is
+            // `.off` on most formats today, but `.auto`/cinematic modes
+            // have been the default on some device/format combinations,
+            // and stabilization means the ISP crops + warps every frame
+            // (plus extra buffering latency) continuously for as long as
+            // the camera is open -- pure cost for a pre-roll buffer that
+            // is mostly propped up or pocketed rather than handheld.
+            if let videoConnection = self.videoDataOutput.connection(with: .video), videoConnection.isVideoStabilizationSupported {
+                videoConnection.preferredVideoStabilizationMode = .off
+            }
+
+            // Audio is best-effort: if no mic is available or it can't be
+            // attached, the video-only path above has already succeeded,
+            // so we simply skip adding an audio track rather than failing
+            // the whole buffering session over it.
+            if let audioDevice = AVCaptureDevice.default(for: .audio) {
+                if let audioInput = try? AVCaptureDeviceInput(device: audioDevice), self.session.canAddInput(audioInput) {
+                    self.session.addInput(audioInput)
+                    self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataOutputQueue)
+                    if self.session.canAddOutput(self.audioDataOutput) {
+                        self.session.addOutput(self.audioDataOutput)
+                    }
+                }
+            }
+
+            self.session.commitConfiguration()
+        } catch {
+            self.session.commitConfiguration()
+            let nsError = error as NSError
+            let busy = nsError.code == AVError.deviceIsNotAvailableInBackground.rawValue
+            let code = busy ? CircularBufferErrorCode.cameraBusy : CircularBufferErrorCode.encoderInitFailed
+            self.delegate?.cameraEncoderController(self, didFailWithCode: code, message: "Falha ao abrir a câmera: \(error.localizedDescription)")
+            return
+        }
+
+        guard let compressionSession = self.makeCompressionSession(config: config) else {
+            self.delegate?.cameraEncoderController(self, didFailWithCode: CircularBufferErrorCode.encoderInitFailed, message: "Falha ao iniciar o encoder H.264.")
+            return
+        }
+        // New encoder generation: anything the previous VTCompressionSession
+        // still emits from now on is dropped in handleEncodedSampleBuffer
+        // instead of landing in the ring buffer under the wrong
+        // formatDescription.
+        self.stateLock.lock()
+        self.encoderGeneration &+= 1
+        self.compressionSession = compressionSession
+        self.formatDescription = nil
+        self.encoderErrorPolicy.reset()
+        self.lastEncodedFrameUptime = nil
+        self.stateLock.unlock()
+
+        self.session.startRunning()
+        self.stateLock.lock()
+        self.isRunning = true
+        self.stateLock.unlock()
+
+        // Reliability bookkeeping (all sessionQueue-confined). An ordinary
+        // start wipes the slate: fresh watchdog window, fresh health state,
+        // and the first `healthy` is only announced once an encoded frame
+        // actually exists (see watchdogTick) rather than optimistically
+        // here. A recovery restart (`restartPipeline`) instead keeps the
+        // watchdog's escalation stage -- so a restart that doesn't bring
+        // frames back escalates further instead of starting the ladder over
+        // forever -- and stays `recovering` until frames flow.
+        let now = Self.uptime
+        self.isSessionInterrupted = self.session.isInterrupted
+        self.healthTracker.isInterrupted = self.isSessionInterrupted
+        if isRecoveryRestart {
+            self.watchdog.restartWindow(now: now)
+        } else {
+            self.watchdog.reset(now: now)
+            self.healthTracker.reset()
+            self.healthTracker.isInterrupted = self.isSessionInterrupted
+            self.recoveringSince = nil
+            self.awaitingInitialHealth = true
+        }
+        if self.isSessionInterrupted {
+            self.publishHealth(reason: "interruptedAtStart")
+        }
+        PegueiDiag.log("pipeline started recoveryRestart=\(isRecoveryRestart) session.isRunning=\(self.session.isRunning) interrupted=\(self.isSessionInterrupted)")
+
+        // Inputs/outputs were just removed and re-added, which gives the
+        // preview layer a brand-new connection (enabled by default) -- pocket
+        // mode's "preview off" has to be re-applied to it.
+        self.applyPreviewSuppression()
+    }
+
+    /// The plain single-lens back **wide** camera, and only that (user
+    /// decision 2026-10-21, battery/reliability pass). This used to prefer a
+    /// virtual multi-lens device (`.builtInTripleCamera`, then
+    /// `.builtInDualWideCamera`) so `videoZoomFactor` could sweep across
+    /// physical lenses -- but:
+    ///
+    /// - the ultra-wide half of that never worked anyway: confirmed on a
+    ///   physical triple-camera iPhone that `minAvailableVideoZoomFactor`
+    ///   stays clamped to the wide lens for every format a plain
+    ///   (non-multicam) `AVCaptureSession` offers, and forcing
+    ///   `videoZoomFactor` below it crashes with `NSRangeException` (see
+    ///   DECISIONS.md "Camera zoom (0.5x correction)");
+    /// - a virtual device keeps the constituent-lens switching machinery
+    ///   (and, depending on zoom/light, a second sensor) powered for as
+    ///   long as the camera is open, which for an always-on pre-roll app is
+    ///   the whole session -- measurable draw for a feature (optical
+    ///   telephoto at 2x/3x+) the user decided wasn't worth it. Zoom above
+    ///   1x is digital (sensor crop) on the wide lens now.
+    ///
+    /// `AVCaptureDevice.default(_:for:position:)` returns nil (not a crash)
+    /// when there's no such camera (e.g. a Simulator), which callers already
+    /// handle.
+    private static func pickBackCameraDevice() -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     }
 
     /// Finds a device format whose pixel dimensions match the requested
@@ -445,20 +767,22 @@ final class CameraEncoderController: NSObject {
 
     /// AVFoundation's `videoZoomFactor` is an internal, **device-relative**
     /// unit, not the user-facing "x" number the stock Camera app shows --
-    /// on a virtual multi-lens device, `1.0` is simply the device's own
-    /// minimum, which on a triple/dual-wide camera IS the ultra-wide lens,
-    /// not the wide lens. The wide lens (the real "1x" reference) is
-    /// `virtualDeviceSwitchOverVideoZoomFactors.first`, confirmed against
-    /// an Apple DTS engineer's own example on the developer forums (iPhone
-    /// 14 Pro: `minAvailableVideoZoomFactor == 1.0` → ultra-wide/"0.5x",
-    /// `virtualDeviceSwitchOverVideoZoomFactors == [2, 6]` → `2.0` is the
-    /// wide lens/"1x", `6.0` is telephoto/"3x") -- see DECISIONS.md "Camera
-    /// zoom" for the full story of how this was found and why the earlier
-    /// `minZoom <= 0.6` check was simply wrong for this device generation.
-    /// A device with no virtual switchover array at all (a plain
-    /// single-lens wide camera) has no ultra-wide either, so falling back
-    /// to `minAvailableVideoZoomFactor` itself as the reference makes
-    /// display and internal units the same there, matching prior behavior.
+    /// on a *virtual* multi-lens device, `1.0` is the device's own minimum,
+    /// which on a triple/dual-wide camera is the ultra-wide lens, and the
+    /// wide lens (the real "1x" reference) is
+    /// `virtualDeviceSwitchOverVideoZoomFactors.first` (confirmed against an
+    /// Apple DTS engineer's example on the developer forums -- iPhone 14
+    /// Pro: switch-overs `[2, 6]`, so `2.0` = wide/"1x"; see DECISIONS.md
+    /// "Camera zoom").
+    ///
+    /// Since `pickBackCameraDevice()` now only ever returns the plain
+    /// `.builtInWideAngleCamera` (2026-10-21), the switch-over array is
+    /// always empty in practice and this takes the fallback branch:
+    /// `minAvailableVideoZoomFactor` (1.0 on the wide lens) *is* the wide
+    /// lens, so display and internal units coincide and there's no
+    /// ultra-wide below it. The virtual-device branch is kept anyway so
+    /// re-enabling a multi-lens device later can't silently reintroduce the
+    /// "1x is actually 0.5x" unit bug this function exists to prevent.
     private static func wideLensReferenceZoom(for device: AVCaptureDevice) -> CGFloat {
         if let wideLensFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first {
             return CGFloat(wideLensFactor.doubleValue)
@@ -472,7 +796,8 @@ final class CameraEncoderController: NSObject {
     /// `beginConfiguration()`/`commitConfiguration()`, so it cannot restart
     /// the capture session or interrupt an in-flight manual recording.
     /// `factor` and the returned applied value are both **display** units
-    /// (0.5 = ultra-wide, 1.0 = wide, etc.) -- see `wideLensReferenceZoom`.
+    /// (1.0 = wide lens; with the wide-only device everything above that is
+    /// digital zoom) -- see `wideLensReferenceZoom`.
     func setZoom(factor: Double, onSet: @escaping (Double) -> Void, onFailed: @escaping (String, String) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -503,7 +828,9 @@ final class CameraEncoderController: NSObject {
     /// is below some hardcoded threshold, which is what made 0.5x invisible
     /// on every triple/dual-wide-camera device (their internal minimum is
     /// always exactly `1.0`, by definition of it being *a* minimum, whether
-    /// or not that minimum happens to be the ultra-wide lens).
+    /// or not that minimum happens to be the ultra-wide lens). With the
+    /// wide-only back camera (2026-10-21) `hasUltraWide` is always `false`
+    /// and `minZoom` is `1.0`; JS already hides the 0.5x pill in that case.
     func zoomInfo(onResult: @escaping (Double, Double, Bool) -> Void, onFailed: @escaping (String, String) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -522,7 +849,11 @@ final class CameraEncoderController: NSObject {
         }
     }
 
-    private func setUpCompressionSession(config: BufferConfig) -> Bool {
+    /// Creates (but does not install) a configured H.264 session -- callers
+    /// install it into `compressionSession` under `stateLock` together with
+    /// an `encoderGeneration` bump, so the swap is atomic with respect to
+    /// the capture/encode threads (see `rebuildEncoder`).
+    private func makeCompressionSession(config: BufferConfig) -> VTCompressionSession? {
         var session: VTCompressionSession?
         let refcon = Unmanaged.passUnretained(self).toOpaque()
 
@@ -539,7 +870,10 @@ final class CameraEncoderController: NSObject {
             compressionSessionOut: &session
         )
 
-        guard status == noErr, let compressionSession = session else { return false }
+        guard status == noErr, let compressionSession = session else {
+            PegueiDiag.log("VTCompressionSessionCreate failed status=\(status)")
+            return nil
+        }
 
         VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
@@ -549,9 +883,7 @@ final class CameraEncoderController: NSObject {
         let bitRate = estimateBitRate(config: config)
         VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_AverageBitRate, value: bitRate as CFNumber)
         VTCompressionSessionPrepareToEncodeFrames(compressionSession)
-
-        self.compressionSession = compressionSession
-        return true
+        return compressionSession
     }
 
     private func estimateBitRate(config: BufferConfig) -> Int {
@@ -560,18 +892,61 @@ final class CameraEncoderController: NSObject {
     }
 
     /// C-compatible VTCompressionSession output callback. Must be a free
-    /// function (no captures) -- state travels through `outputCallbackRefCon`.
-    private let compressionOutputCallback: VTCompressionOutputCallback = { refcon, _, status, _, sampleBuffer in
-        guard status == noErr, let sampleBuffer, let refcon else { return }
+    /// function (no captures) -- state travels through `outputCallbackRefCon`
+    /// (the controller) and `sourceFrameRefCon` (the `encoderGeneration` the
+    /// frame was submitted under, see `captureOutput`).
+    private let compressionOutputCallback: VTCompressionOutputCallback = { refcon, sourceFrameRefcon, status, infoFlags, sampleBuffer in
+        guard let refcon else { return }
         let controller = Unmanaged<CameraEncoderController>.fromOpaque(refcon).takeUnretainedValue()
-        controller.handleEncodedSampleBuffer(sampleBuffer)
+        let generation = UInt(bitPattern: sourceFrameRefcon)
+        guard status == noErr, let sampleBuffer else {
+            controller.recordEncodeError(status, stage: "callback")
+            // status == noErr with no sample buffer is a frame the encoder
+            // chose to drop (kVTEncodeInfo_FrameDropped under real-time
+            // pressure) -- normal, not a fault, so it doesn't count toward
+            // the recreate policy.
+            if status != noErr {
+                controller.noteEncoderError(status, generation: generation)
+            } else if !infoFlags.contains(.frameDropped) {
+                PegueiDiag.log("encoder callback with noErr and no sample buffer, flags=\(infoFlags.rawValue)")
+            }
+            return
+        }
+        controller.diagLock.lock()
+        controller.diagEncodedFrames += 1
+        controller.diagLock.unlock()
+        controller.handleEncodedSampleBuffer(sampleBuffer, generation: generation)
     }
 
-    private func handleEncodedSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        if formatDescription == nil {
-            formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+    private func recordEncodeError(_ status: OSStatus, stage: String) {
+        diagLock.lock()
+        diagEncodeErrors += 1
+        let isNewError = status != diagLastEncodeError
+        diagLastEncodeError = status
+        diagLock.unlock()
+        if isNewError {
+            PegueiDiag.log("ENCODE ERROR stage=\(stage) status=\(status)")
         }
+    }
 
+    /// Feeds an encode failure (from `VTCompressionSessionEncodeFrame` or
+    /// the output callback) into `EncoderErrorPolicy`, and schedules an
+    /// encoder rebuild when the policy says so. Errors from a session that's
+    /// already been replaced (stale `generation`) are ignored: invalidating
+    /// the old session routinely makes its in-flight frames fail with
+    /// -12903, which must not trigger a second rebuild of the *new* one.
+    private func noteEncoderError(_ status: OSStatus, generation: UInt) {
+        stateLock.lock()
+        let shouldRebuild = isRunning && generation == encoderGeneration && encoderErrorPolicy.recordError(status: status)
+        stateLock.unlock()
+        guard shouldRebuild else { return }
+        PegueiDiag.log("encoder error policy -> rebuild (status=\(status) generation=\(generation))")
+        sessionQueue.async { [weak self] in
+            self?.rebuildEncoder(reason: "encodeError \(status)", expectedGeneration: generation)
+        }
+    }
+
+    private func handleEncodedSampleBuffer(_ sampleBuffer: CMSampleBuffer, generation: UInt) {
         guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
         var length = 0
         var dataPointer: UnsafeMutablePointer<Int8>?
@@ -589,14 +964,29 @@ final class CameraEncoderController: NSObject {
         }
 
         let frame = EncodedFrame(data: data, presentationTimeUs: ptsUs, isKeyFrame: isKeyFrame)
-        ringBuffer?.add(frame)
-        appendToPendingSaveIfNeeded(frame)
-    }
 
-    private func appendToPendingSaveIfNeeded(_ frame: EncodedFrame) {
-        // No auto-stop target here -- a manual recording only ends when
+        // Everything that ties this frame to "the current encoder" happens in
+        // one stateLock critical section -- the generation check, capturing
+        // the format description, the ring-buffer append and the pending
+        // recording's tail append -- because `rebuildEncoder` swaps all of
+        // those in one critical section too. Done piecemeal (as before), a
+        // frame from the old session could land in the ring buffer *after*
+        // the rebuild cleared it, and finalizeSave would then mux it under
+        // the new session's SPS/PPS: a corrupt clip, i.e. exactly the
+        // "never mix formats" rule the rebuild exists to uphold. No auto-stop
+        // target here -- a manual recording only ends when
         // stopManualRecording() is called explicitly.
         stateLock.lock()
+        guard generation == encoderGeneration else {
+            stateLock.unlock()
+            return
+        }
+        if formatDescription == nil {
+            formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+        }
+        encoderErrorPolicy.recordSuccess()
+        lastEncodedFrameUptime = Self.uptime
+        ringBuffer?.add(frame)
         if pendingSave != nil {
             pendingSave!.tailFrames.append(frame)
         }
@@ -604,10 +994,6 @@ final class CameraEncoderController: NSObject {
     }
 
     private func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        if audioFormatDescription == nil {
-            audioFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
-        }
-
         // Copy the PCM bytes out and let sampleBuffer (and its pooled
         // backing buffer) be released the moment this function returns --
         // see AudioSampleFrame's doc comment for why retaining the original
@@ -623,12 +1009,14 @@ final class CameraEncoderController: NSObject {
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let ptsUs = Int64(pts.seconds * 1_000_000)
         let frame = AudioSampleFrame(data: data, presentationTimeUs: ptsUs, numSamples: numSamples)
-        audioRingBuffer?.add(frame)
-        appendAudioToPendingSaveIfNeeded(frame)
-    }
-
-    private func appendAudioToPendingSaveIfNeeded(_ frame: AudioSampleFrame) {
+        // Same single critical section as the video path: the format
+        // description, ring buffer and pending recording are swapped/
+        // snapshotted together under stateLock by stop/rebuild/teardown.
         stateLock.lock()
+        if audioFormatDescription == nil {
+            audioFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+        }
+        audioRingBuffer?.add(frame)
         if pendingSave != nil {
             pendingSave!.audioTailFrames.append(frame)
         }
@@ -653,7 +1041,15 @@ final class CameraEncoderController: NSObject {
             onFailed(CircularBufferErrorCode.saveFailed, "Já existe uma gravação em andamento.")
             return
         }
-        let capturedFps = activeFps
+        // A clip that an encoder rebuild already finalized early but that JS
+        // never collected (it only ever collects it via
+        // stopManualRecording) is dropped here: JS starting a fresh
+        // recording means it no longer considers that one in flight. Its
+        // file -- if the early save succeeded -- is already in the gallery.
+        if let detached = detachedSave, detached.waiter == nil {
+            PegueiDiag.log("startManualRecording dropping uncollected detached save \(detached.outputURL.lastPathComponent)")
+            detachedSave = nil
+        }
         stateLock.unlock()
 
         do {
@@ -670,25 +1066,62 @@ final class CameraEncoderController: NSObject {
             return
         }
 
-        let head = buffer.snapshotFromOldestKeyframe()
-        let audioHead = audioRingBuffer?.snapshot() ?? []
         let outputURL = moviesDir.appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970 * 1000)).mp4")
 
+        // The head snapshot and installing `pendingSave` happen in the same
+        // critical section (they used to be two): an encoder rebuild landing
+        // between them would clear the ring buffer and bump the format, and
+        // this clip would then pair a head from the old encoder with a tail
+        // from the new one -- an undecodable mix. Snapshotting is a cheap
+        // array copy, fine to do under the lock.
         stateLock.lock()
-        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL, fps: capturedFps)
+        guard isRunning, pendingSave == nil, ringBuffer === buffer else {
+            stateLock.unlock()
+            onFailed(CircularBufferErrorCode.notBuffering, "O buffer não está ativo.")
+            return
+        }
+        let head = buffer.snapshotFromOldestKeyframe()
+        let audioHead = audioRingBuffer?.snapshot() ?? []
+        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL, fps: activeFps)
         stateLock.unlock()
+        PegueiDiag.log("startManualRecording head=\(head.count) audioHead=\(audioHead.count) session.isRunning=\(session.isRunning)")
         onStarted()
     }
 
     func stopManualRecording(onSaved: @escaping (String, Double) -> Void, onFailed: @escaping (String, String) -> Void) {
         stateLock.lock()
         guard let save = pendingSave else {
+            // The recording JS thinks is in flight may have been cut short
+            // and finalized early by an encoder rebuild / pipeline restart
+            // (see `takePendingSaveForEarlyFinalizationLocked`): hand back
+            // that clip's result now, or once its finalize completes.
+            if var detached = detachedSave {
+                if let outcome = detached.outcome {
+                    detachedSave = nil
+                    stateLock.unlock()
+                    PegueiDiag.log("stopManualRecording delivering detached save \(detached.outputURL.lastPathComponent)")
+                    Self.deliver(outcome, onSaved: onSaved, onFailed: onFailed)
+                } else {
+                    detached.waiter = SaveWaiter(onSaved: onSaved, onFailed: onFailed)
+                    detachedSave = detached
+                    stateLock.unlock()
+                    PegueiDiag.log("stopManualRecording waiting on detached save \(detached.outputURL.lastPathComponent)")
+                }
+                return
+            }
             stateLock.unlock()
             onFailed(CircularBufferErrorCode.saveFailed, "Nenhuma gravação em andamento.")
             return
         }
         pendingSave = nil
+        // Snapshotted here, in the same critical section that ends the
+        // recording, instead of finalizeSave reading `self.formatDescription`
+        // later on a background queue: by then an encoder rebuild may
+        // already have reset it to the *next* session's format.
+        let videoFormat = formatDescription
+        let audioFormat = audioFormatDescription
         stateLock.unlock()
+        PegueiDiag.log("stopManualRecording head=\(save.headFrames.count) tail=\(save.tailFrames.count) audio=\(save.audioHeadFrames.count)+\(save.audioTailFrames.count)")
         // This clip's frames are already captured into `save` (headFrames/
         // tailFrames), decoupled from the ring buffers -- so clearing them
         // here is safe and necessary: otherwise footage already saved in
@@ -697,16 +1130,32 @@ final class CameraEncoderController: NSObject {
         // duplicating content across consecutive clips.
         ringBuffer?.clear()
         audioRingBuffer?.clear()
-        finalizeSave(save, onSaved: onSaved, onFailed: onFailed)
+        finalizeSave(save, videoFormat: videoFormat, audioFormat: audioFormat, onSaved: onSaved, onFailed: onFailed)
     }
 
-    private func finalizeSave(_ save: PendingSave, onSaved: @escaping (String, Double) -> Void, onFailed: @escaping (String, String) -> Void) {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self, let formatDescription = self.formatDescription else {
+    private static func deliver(_ outcome: SaveOutcome, onSaved: (String, Double) -> Void, onFailed: (String, String) -> Void) {
+        switch outcome {
+        case let .saved(path, duration):
+            onSaved(path, duration)
+        case let .failed(code, message):
+            onFailed(code, message)
+        }
+    }
+
+    private func finalizeSave(
+        _ save: PendingSave,
+        videoFormat: CMFormatDescription?,
+        audioFormat: CMFormatDescription?,
+        onSaved: @escaping (String, Double) -> Void,
+        onFailed: @escaping (String, String) -> Void
+    ) {
+        DispatchQueue.global(qos: .utility).async {
+            guard let formatDescription = videoFormat else {
+                PegueiDiag.log("finalizeSave: no video format description (head=\(save.headFrames.count) tail=\(save.tailFrames.count))")
                 onFailed(CircularBufferErrorCode.saveFailed, "Formato do encoder ainda não disponível.")
                 return
             }
-            let audioFormatDescription = self.audioFormatDescription
+            let audioFormatDescription = audioFormat
 
             let videoFrames = save.headFrames + save.tailFrames
             guard let startUs = videoFrames.first?.presentationTimeUs else {
@@ -864,7 +1313,16 @@ final class CameraEncoderController: NSObject {
                 let finished = semaphore.wait(timeout: .now() + 10) == .success
 
                 if finished, writer.status == .completed {
-                    onSaved(save.outputURL.path, durationSeconds)
+                    // `.completed` alone isn't proof of a playable clip --
+                    // see SaveVerification. Only a verified file resolves
+                    // the promise (and so triggers the "saved" chime in JS).
+                    if let failure = Self.verifySavedClip(at: save.outputURL) {
+                        PegueiDiag.log("finalizeSave verification FAILED: \(failure)")
+                        try? FileManager.default.removeItem(at: save.outputURL)
+                        onFailed(CircularBufferErrorCode.saveFailed, failure)
+                    } else {
+                        onSaved(save.outputURL.path, durationSeconds)
+                    }
                 } else {
                     onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "Falha desconhecida ao finalizar o vídeo.")
                 }
@@ -872,6 +1330,33 @@ final class CameraEncoderController: NSObject {
                 onFailed(CircularBufferErrorCode.saveFailed, "Falha ao gerar o arquivo de vídeo: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Gathers the facts `SaveVerification` judges (file exists, non-zero
+    /// size, at least one video track) for a just-written clip. Runs on
+    /// finalizeSave's background queue, so blocking on the async track load
+    /// is fine; bounded like the other waits in finalizeSave so a stuck load
+    /// surfaces as a failure instead of a promise that never settles.
+    /// `loadTracks(withMediaType:completionHandler:)` rather than the
+    /// synchronous `tracks(withMediaType:)`, which is deprecated since iOS 16
+    /// (this project's deployment target).
+    private static func verifySavedClip(at url: URL) -> String? {
+        let fileManager = FileManager.default
+        let exists = fileManager.fileExists(atPath: url.path)
+        let size = (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+
+        var videoTrackCount = 0
+        if exists, size > 0 {
+            let semaphore = DispatchSemaphore(value: 0)
+            let result = TrackCountBox()
+            AVURLAsset(url: url).loadTracks(withMediaType: .video) { tracks, _ in
+                result.set(tracks?.count ?? 0)
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 5)
+            videoTrackCount = result.get()
+        }
+        return SaveVerification.failureReason(fileExists: exists, fileSizeBytes: size, videoTrackCount: videoTrackCount)
     }
 
     /// Rebuilds a playable PCM `CMSampleBuffer` from bytes copied out at
@@ -998,45 +1483,64 @@ final class CameraEncoderController: NSObject {
 
     private func stopInternal(clearPendingConfig: Bool) {
         sessionQueue.async { [weak self] in
-            guard let self else { return }
-            if self.session.isRunning {
-                self.session.stopRunning()
-            }
-            if let compressionSession = self.compressionSession {
-                VTCompressionSessionInvalidate(compressionSession)
-            }
-            self.compressionSession = nil
-            self.formatDescription = nil
-            self.audioFormatDescription = nil
-            self.deviceLock.lock()
-            self.activeDevice = nil
-            self.deviceLock.unlock()
-
-            // `ringBuffer`/`audioRingBuffer` must go to nil in the *same*
-            // stateLock critical section as `isRunning = false` --
-            // startManualRecording reads both under stateLock expecting
-            // them to be consistent. Clearing the buffers outside the lock
-            // (as this used to do) left a real window where a concurrent
-            // startManualRecording call could observe isRunning == true
-            // with ringBuffer == nil (confirmed on-device: exactly that
-            // combination surfaced "O buffer não está ativo" right after
-            // navigating back from Gallery, which detaches/reattaches the
-            // preview and races this teardown).
-            self.stateLock.lock()
-            self.isRunning = false
-            if clearPendingConfig {
-                self.pendingConfig = nil
-            }
-            self.pendingSave = nil
-            let oldRingBuffer = self.ringBuffer
-            let oldAudioRingBuffer = self.audioRingBuffer
-            self.ringBuffer = nil
-            self.audioRingBuffer = nil
-            self.stateLock.unlock()
-
-            oldRingBuffer?.clear()
-            oldAudioRingBuffer?.clear()
+            self?.teardownOnSessionQueue(clearPendingConfig: clearPendingConfig)
         }
+    }
+
+    /// Body of `stopInternal`, callable synchronously from code that's
+    /// already on `sessionQueue` (the recovery paths).
+    private func teardownOnSessionQueue(clearPendingConfig: Bool) {
+        PegueiDiag.log("stopInternal clearPendingConfig=\(clearPendingConfig)")
+        if session.isRunning {
+            session.stopRunning()
+        }
+        deviceLock.lock()
+        activeDevice = nil
+        deviceLock.unlock()
+
+        // `ringBuffer`/`audioRingBuffer` must go to nil in the *same*
+        // stateLock critical section as `isRunning = false` --
+        // startManualRecording reads both under stateLock expecting
+        // them to be consistent. Clearing the buffers outside the lock
+        // (as this used to do) left a real window where a concurrent
+        // startManualRecording call could observe isRunning == true
+        // with ringBuffer == nil (confirmed on-device: exactly that
+        // combination surfaced "O buffer não está ativo" right after
+        // navigating back from Gallery, which detaches/reattaches the
+        // preview and races this teardown). The encoder swap (generation
+        // bump + nil session + format reset) lives in the same section for
+        // the reason spelled out in handleEncodedSampleBuffer.
+        stateLock.lock()
+        isRunning = false
+        if clearPendingConfig {
+            pendingConfig = nil
+        }
+        pendingSave = nil
+        encoderGeneration &+= 1
+        let oldCompressionSession = compressionSession
+        compressionSession = nil
+        formatDescription = nil
+        audioFormatDescription = nil
+        lastEncodedFrameUptime = nil
+        encoderErrorPolicy.reset()
+        let oldRingBuffer = ringBuffer
+        let oldAudioRingBuffer = audioRingBuffer
+        ringBuffer = nil
+        audioRingBuffer = nil
+        stateLock.unlock()
+
+        if let oldCompressionSession {
+            VTCompressionSessionInvalidate(oldCompressionSession)
+        }
+        oldRingBuffer?.clear()
+        oldAudioRingBuffer?.clear()
+
+        // Any pending startRunning() retry chain belongs to the pipeline
+        // that just went away.
+        sessionRetryToken &+= 1
+        isSessionRetryInFlight = false
+        needsSessionRestartOnActive = false
+        isSessionInterrupted = false
     }
 }
 
@@ -1050,16 +1554,567 @@ extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate,
             handleAudioSampleBuffer(sampleBuffer)
             return
         }
-        guard let compressionSession, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        diagLock.lock()
+        diagCapturedFrames += 1
+        diagLock.unlock()
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        // Read the session and its generation together (the pair is swapped
+        // atomically by rebuildEncoder/teardown), then encode outside the
+        // lock. If the session gets invalidated while this encode is in
+        // flight, the call simply fails with -12903 for a stale generation,
+        // which noteEncoderError ignores.
+        stateLock.lock()
+        let compressionSession = self.compressionSession
+        let generation = encoderGeneration
+        stateLock.unlock()
+        guard let compressionSession else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        VTCompressionSessionEncodeFrame(
+        let encodeStatus = VTCompressionSessionEncodeFrame(
             compressionSession,
             imageBuffer: pixelBuffer,
             presentationTimeStamp: pts,
             duration: .invalid,
             frameProperties: nil,
-            sourceFrameRefcon: nil,
+            sourceFrameRefcon: UnsafeMutableRawPointer(bitPattern: generation),
             infoFlagsOut: nil
         )
+        if encodeStatus != noErr {
+            recordEncodeError(encodeStatus, stage: "encodeFrame")
+            noteEncoderError(encodeStatus, generation: generation)
+        }
+    }
+}
+
+// MARK: - Reliability: interruptions, runtime errors, encoder self-healing,
+// frame-flow watchdog, thermal step-down, pocket-mode preview (2026-10-21)
+//
+// Field evidence that drove this ("Buffer vazio, nada para salvar." after
+// the app had been open a long time on an iPhone 17 Pro Max): nothing used to
+// react to the capture session dying (`isRunning` stayed true forever after
+// an AVCaptureSession runtime error/interruption), VTCompressionSessionEncode-
+// Frame's status was ignored (after a background/interruption cycle the
+// hardware encoder session can come back invalid, -12903, and *every* frame
+// then silently fails), and since the ring buffer is cleared after each save,
+// a dead pipeline meant the next save found it empty. Everything here
+// converges on sessionQueue, the same serial queue every start/stop already
+// runs on, so recovery actions can never interleave with each other or with
+// a JS-driven start/stop; the decisions themselves live in the pure types in
+// PipelineHealthPolicy.swift (unit-tested in PegueiTests).
+extension CameraEncoderController {
+    private struct EarlyFinalization {
+        let save: PendingSave
+        let videoFormat: CMFormatDescription?
+        let audioFormat: CMFormatDescription?
+    }
+
+    fileprivate func installReliabilityMonitoring() {
+        let center = NotificationCenter.default
+
+        // Observers deliver on the posting thread (queue: nil) and hop to
+        // sessionQueue themselves; payloads are extracted before the hop.
+        reliabilityObservers.append(center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] note in
+            guard let self else { return }
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            self.sessionQueue.async { self.handleRuntimeError(error) }
+        })
+        reliabilityObservers.append(center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] note in
+            guard let self else { return }
+            let rawReason = note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int
+            let reasonName = Self.interruptionReasonName(rawReason)
+            self.sessionQueue.async { self.handleInterruption(reasonName: reasonName) }
+        })
+        reliabilityObservers.append(center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            self.sessionQueue.async { self.handleInterruptionEnded() }
+        })
+        reliabilityObservers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.appActivityChanged(isActive: true)
+        })
+        reliabilityObservers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.appActivityChanged(isActive: false)
+        })
+        // The singleton can be first touched from a bridge thread, so the
+        // initial state is read on main (applicationState is main-only).
+        DispatchQueue.main.async { [weak self] in
+            self?.appActivityChanged(isActive: UIApplication.shared.applicationState == .active)
+        }
+
+        // 1 Hz on sessionQueue itself: ticks are serialized with every
+        // start/stop/recovery action, and a tick can't fire mid-restart. The
+        // leeway lets the OS coalesce the wakeup with others; the tick is a
+        // handful of reads when nothing's wrong (and a no-op when the
+        // pipeline isn't running at all).
+        let timer = DispatchSource.makeTimerSource(queue: sessionQueue)
+        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
+        timer.setEventHandler { [weak self] in self?.watchdogTick() }
+        timer.resume()
+        watchdogTimer = timer
+    }
+
+    private static func interruptionReasonName(_ rawReason: Int?) -> String {
+        guard let rawReason, let reason = AVCaptureSession.InterruptionReason(rawValue: rawReason) else {
+            return "unknown"
+        }
+        switch reason {
+        case .videoDeviceNotAvailableInBackground:
+            return "background"
+        case .audioDeviceInUseByAnotherClient:
+            return "audioInUseByAnotherClient"
+        case .videoDeviceInUseByAnotherClient:
+            return "videoInUseByAnotherClient"
+        case .videoDeviceNotAvailableWithMultipleForegroundApps:
+            return "multipleForegroundApps"
+        case .videoDeviceNotAvailableDueToSystemPressure:
+            return "systemPressure"
+        default:
+            // Newer reasons (e.g. iOS 26's sensitive-content mitigation)
+            // are reported by raw value; a plain `default` keeps this
+            // compiling warning-free across SDKs that add cases.
+            return "reason\(rawReason)"
+        }
+    }
+
+    // MARK: App state
+
+    /// Called on main.
+    private func appActivityChanged(isActive: Bool) {
+        stateLock.lock()
+        let changed = isAppActive != isActive
+        isAppActive = isActive
+        stateLock.unlock()
+        if changed {
+            PegueiDiag.log("app active=\(isActive)")
+        }
+        guard isActive else { return }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            // Whatever happened while inactive (capture is suspended by the
+            // OS then), the pipeline gets a full fresh window to resume on
+            // its own before the watchdog judges it.
+            self.watchdog.restartWindow(now: Self.uptime)
+            if self.needsSessionRestartOnActive {
+                self.needsSessionRestartOnActive = false
+                self.startSessionRetryChain()
+            }
+        }
+    }
+
+    // MARK: Capture session notifications (sessionQueue)
+
+    /// `AVError.mediaServicesWereReset` means the media server process died
+    /// and every capture/audio object it backed is gone -- Apple's guidance
+    /// is to rebuild, so this does a full pipeline restart (inputs, outputs,
+    /// VTCompressionSession, and the AVAudioSession category/activation that
+    /// openCameraAndStartOnSessionQueue sets up). Anything else gets the
+    /// lighter AVCam-style remedy first: call startRunning() again, with
+    /// backoff, escalating to a full restart only if that keeps failing.
+    private func handleRuntimeError(_ error: NSError?) {
+        stateLock.lock()
+        let running = isRunning
+        let appActive = isAppActive
+        stateLock.unlock()
+        guard running else { return }
+
+        let code = error?.code ?? 0
+        if code == AVError.mediaServicesWereReset.rawValue {
+            restartPipeline(reason: "mediaServicesWereReset")
+            return
+        }
+        beginRecovery(reason: "runtimeError:\(code)")
+        guard appActive else {
+            // iOS won't let a non-active app start capture; retrying now
+            // would just fail (or worse, succeed into an immediate
+            // interruption). appActivityChanged picks this up.
+            needsSessionRestartOnActive = true
+            return
+        }
+        startSessionRetryChain()
+    }
+
+    private func startSessionRetryChain() {
+        sessionRetryToken &+= 1
+        isSessionRetryInFlight = true
+        attemptSessionStart(attempt: 0, token: sessionRetryToken)
+    }
+
+    private func attemptSessionStart(attempt: Int, token: UInt) {
+        guard token == sessionRetryToken else { return }
+        stateLock.lock()
+        let running = isRunning
+        let appActive = isAppActive
+        stateLock.unlock()
+
+        guard running else {
+            isSessionRetryInFlight = false
+            return
+        }
+        if session.isRunning {
+            isSessionRetryInFlight = false
+            watchdog.restartWindow(now: Self.uptime)
+            return
+        }
+        guard appActive else {
+            isSessionRetryInFlight = false
+            needsSessionRestartOnActive = true
+            return
+        }
+        guard attempt < SessionRestartBackoff.maxAttempts else {
+            isSessionRetryInFlight = false
+            restartPipeline(reason: "startRunning retries exhausted")
+            return
+        }
+
+        session.startRunning()
+        PegueiDiag.log("session startRunning retry attempt=\(attempt) -> isRunning=\(session.isRunning)")
+        if session.isRunning {
+            isSessionRetryInFlight = false
+            // The watchdog verifies frames actually flow from here on.
+            watchdog.restartWindow(now: Self.uptime)
+            return
+        }
+        let delay = SessionRestartBackoff.delay(forAttempt: attempt)
+        sessionQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.attemptSessionStart(attempt: attempt + 1, token: token)
+        }
+    }
+
+    private func handleInterruption(reasonName: String) {
+        PegueiDiag.log("handling interruption reason=\(reasonName)")
+        isSessionInterrupted = true
+        healthTracker.isInterrupted = true
+        stateLock.lock()
+        let running = isRunning
+        stateLock.unlock()
+        if running {
+            publishHealth(reason: reasonName)
+        }
+    }
+
+    /// The OS resumes an interrupted session by itself; what used to be
+    /// missing was *checking* that it did. Health goes `recovering` (not
+    /// straight to `healthy`) until an encoded frame actually arrives, and
+    /// the watchdog gets a fresh window -- if the encoder came back invalid
+    /// (-12903, the classic post-interruption failure), the encode-error
+    /// policy or the watchdog takes it from there. If the session itself
+    /// didn't resume, nudge it with the same startRunning() retry chain a
+    /// runtime error uses.
+    private func handleInterruptionEnded() {
+        isSessionInterrupted = false
+        healthTracker.isInterrupted = false
+        stateLock.lock()
+        let running = isRunning
+        stateLock.unlock()
+        PegueiDiag.log("handling interruption end running=\(running) session.isRunning=\(session.isRunning)")
+        guard running else { return }
+        watchdog.restartWindow(now: Self.uptime)
+        beginRecovery(reason: "interruptionEnded")
+        if !session.isRunning {
+            startSessionRetryChain()
+        }
+    }
+
+    // MARK: Watchdog (sessionQueue, 1 Hz)
+
+    private func watchdogTick() {
+        stateLock.lock()
+        let running = isRunning
+        let appActive = isAppActive
+        let lastFrame = lastEncodedFrameUptime
+        stateLock.unlock()
+        guard running else { return }
+        let now = Self.uptime
+
+        if let lastFrame {
+            if awaitingInitialHealth {
+                awaitingInitialHealth = false
+                publishHealth(reason: "framesFlowing")
+            }
+            if let since = recoveringSince, lastFrame > since {
+                PegueiDiag.log("recovery confirmed: frames flowing \(String(format: "%.1f", now - since))s after recovery began")
+                recoveringSince = nil
+                healthTracker.isRecovering = false
+                publishHealth(reason: "framesFlowing")
+            }
+        }
+
+        // A startRunning() retry chain in flight already owns recovery; the
+        // watchdog stays out of its way until it finishes (it escalates to
+        // a full restart itself if it fails).
+        let isEligible = appActive && !isSessionInterrupted && !isSessionRetryInFlight
+        switch watchdog.evaluate(now: now, lastFrameTime: lastFrame, isEligible: isEligible) {
+        case .none:
+            break
+        case .recovered:
+            PegueiDiag.log("watchdog: frame flow restored")
+        case .rebuildEncoder:
+            rebuildEncoder(reason: "watchdog:noFrames", expectedGeneration: nil)
+        case .restartPipeline:
+            restartPipeline(reason: "watchdog:noFramesAfterRebuild")
+        case .giveUp:
+            giveUp(reason: "watchdog:restartsFailed")
+        }
+    }
+
+    // MARK: Recovery actions (sessionQueue)
+
+    private func beginRecovery(reason: String) {
+        recoveringSince = Self.uptime
+        healthTracker.isRecovering = true
+        publishHealth(reason: reason)
+    }
+
+    private func publishHealth(reason: String?) {
+        // Right after an ordinary start, nothing has been encoded yet: hold
+        // back a `healthy` (e.g. from the systemPressure KVO's `.initial`
+        // callback at nominal) until watchdogTick sees the first frame.
+        // Non-healthy states (interrupted/throttled) still go out at once.
+        if awaitingInitialHealth, healthTracker.current == .healthy {
+            return
+        }
+        guard let state = healthTracker.takeTransition() else { return }
+        PegueiDiag.log("health -> \(state.rawValue) reason=\(reason ?? "nil")")
+        delegate?.cameraEncoderController(self, didChangeHealth: state, reason: reason)
+    }
+
+    /// Must be called holding stateLock. Ends the in-flight manual recording
+    /// (if any) at exactly this point -- in the same critical section that
+    /// swaps the encoder/ring buffers, so it holds frames from one encoder
+    /// generation only -- and parks a `DetachedSave` slot for its result.
+    private func takePendingSaveForEarlyFinalizationLocked() -> EarlyFinalization? {
+        guard let save = pendingSave else { return nil }
+        pendingSave = nil
+        detachedSave = DetachedSave(outputURL: save.outputURL, outcome: nil, waiter: nil)
+        return EarlyFinalization(save: save, videoFormat: formatDescription, audioFormat: audioFormatDescription)
+    }
+
+    private func finalizeEarly(_ early: EarlyFinalization, reason: String) {
+        PegueiDiag.log("finalizing in-flight recording early (\(reason)) head=\(early.save.headFrames.count) tail=\(early.save.tailFrames.count)")
+        let outputURL = early.save.outputURL
+        finalizeSave(
+            early.save,
+            videoFormat: early.videoFormat,
+            audioFormat: early.audioFormat,
+            onSaved: { [weak self] path, duration in
+                self?.completeDetachedSave(outputURL: outputURL, outcome: .saved(path: path, durationSeconds: duration))
+            },
+            onFailed: { [weak self] code, message in
+                self?.completeDetachedSave(outputURL: outputURL, outcome: .failed(code: code, message: message))
+            }
+        )
+    }
+
+    private func completeDetachedSave(outputURL: URL, outcome: SaveOutcome) {
+        stateLock.lock()
+        guard var detached = detachedSave, detached.outputURL == outputURL else {
+            stateLock.unlock()
+            PegueiDiag.log("detached save \(outputURL.lastPathComponent) finished but was no longer awaited")
+            return
+        }
+        if let waiter = detached.waiter {
+            detachedSave = nil
+            stateLock.unlock()
+            Self.deliver(outcome, onSaved: waiter.onSaved, onFailed: waiter.onFailed)
+        } else {
+            detached.outcome = outcome
+            detachedSave = detached
+            stateLock.unlock()
+        }
+    }
+
+    /// First rung: replace only the VTCompressionSession. The capture
+    /// session keeps running, so this is cheap and fast (no camera
+    /// reopen). The ring buffers are cleared because the new session will
+    /// emit a new SPS/PPS format description and finalizeSave muxes every
+    /// frame of a clip under one format; a recording in flight is cut and
+    /// finalized with what it has, for the same reason.
+    /// `expectedGeneration` (from the encode-error path) makes a queued
+    /// rebuild a no-op if the session it was about has already been
+    /// replaced by the time it runs.
+    private func rebuildEncoder(reason: String, expectedGeneration: UInt?) {
+        stateLock.lock()
+        guard isRunning, let config = activeConfig ?? pendingConfig, expectedGeneration == nil || expectedGeneration == encoderGeneration else {
+            stateLock.unlock()
+            return
+        }
+        encoderGeneration &+= 1
+        let oldSession = compressionSession
+        compressionSession = nil
+        let early = takePendingSaveForEarlyFinalizationLocked()
+        formatDescription = nil
+        encoderErrorPolicy.reset()
+        ringBuffer?.clear()
+        audioRingBuffer?.clear()
+        stateLock.unlock()
+
+        PegueiDiag.log("rebuildEncoder reason=\(reason) recordingCut=\(early != nil)")
+        if let oldSession {
+            VTCompressionSessionInvalidate(oldSession)
+        }
+        beginRecovery(reason: reason)
+        if let early {
+            finalizeEarly(early, reason: reason)
+        }
+
+        guard let newSession = makeCompressionSession(config: config) else {
+            restartPipeline(reason: "encoderRecreateFailed")
+            return
+        }
+        // The generation was already bumped above, so every frame submitted
+        // to the new session from here on carries the current one.
+        stateLock.lock()
+        compressionSession = newSession
+        stateLock.unlock()
+        watchdog.restartWindow(now: Self.uptime)
+    }
+
+    /// Second rung: full teardown + reopen with the pending config (same
+    /// path an ordinary start takes, minus resetting the watchdog's stage).
+    /// Only while a preview is attached -- without one there's nothing to
+    /// restart into, and attachPreviewLayer starts things up itself.
+    private func restartPipeline(reason: String) {
+        stateLock.lock()
+        guard isRunning, previewLayer != nil, pendingConfig != nil else {
+            stateLock.unlock()
+            return
+        }
+        let early = takePendingSaveForEarlyFinalizationLocked()
+        stateLock.unlock()
+
+        PegueiDiag.log("restartPipeline reason=\(reason) recordingCut=\(early != nil)")
+        beginRecovery(reason: reason)
+        if let early {
+            finalizeEarly(early, reason: reason)
+        }
+        teardownOnSessionQueue(clearPendingConfig: false)
+        isRecoveryRestart = true
+        openCameraAndStartOnSessionQueue()
+    }
+
+    /// Recovery failed: stop claiming to buffer. `isRunning` goes false (so
+    /// `isBuffering()` is truthful and JS's AppState handler restarts on
+    /// the next return to the foreground), the camera is released instead
+    /// of being held open producing nothing, and JS gets an error banner.
+    /// `pendingConfig` is kept so a re-attach/`startBuffering` can start
+    /// over cleanly.
+    private func giveUp(reason: String) {
+        stateLock.lock()
+        let early = takePendingSaveForEarlyFinalizationLocked()
+        stateLock.unlock()
+        PegueiDiag.log("GIVING UP reason=\(reason) recordingCut=\(early != nil)")
+        if let early {
+            finalizeEarly(early, reason: reason)
+        }
+        teardownOnSessionQueue(clearPendingConfig: false)
+        delegate?.cameraEncoderController(
+            self,
+            didFailWithCode: CircularBufferErrorCode.encoderInitFailed,
+            message: "A câmera parou de enviar imagens. Saia e volte para o app para reiniciar o buffer."
+        )
+    }
+
+    // MARK: Thermal step-down
+
+    /// KVO callback (arbitrary thread) for `systemPressureState`.
+    fileprivate func systemPressureChanged(to level: AVCaptureDevice.SystemPressureState.Level, on device: AVCaptureDevice) {
+        let mapped: ThermalPressureLevel
+        switch level {
+        case .nominal:
+            mapped = .nominal
+        case .fair:
+            mapped = .fair
+        case .serious:
+            mapped = .serious
+        case .critical:
+            mapped = .critical
+        case .shutdown:
+            mapped = .shutdown
+        default:
+            mapped = .nominal
+        }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.deviceLock.lock()
+            let current = self.activeDevice
+            self.deviceLock.unlock()
+            guard current === device else { return }
+            self.thermalLevel = mapped
+            self.applyThermalFrameRate(on: device)
+        }
+    }
+
+    /// Applies `ThermalFpsPolicy` through activeVideoMin/MaxFrameDuration
+    /// -- a device-level property, so (like zoom) it never reconfigures the
+    /// session, never touches the encoder, and never interrupts a recording
+    /// in flight. `activeFps` follows along so a clip started while
+    /// throttled stamps the right per-frame duration (PTS stay real either
+    /// way). The encoder's ExpectedFrameRate/bitrate hints are deliberately
+    /// left alone: they're hints, and at a lower fps the same bitrate only
+    /// means slightly better quality per frame.
+    private func applyThermalFrameRate(on device: AVCaptureDevice) {
+        let ranges = device.activeFormat.videoSupportedFrameRateRanges
+        let minSupported = Int((ranges.map(\.minFrameRate).min() ?? 1).rounded(.up))
+        let target = ThermalFpsPolicy.targetFps(configuredFps: configuredFps, level: thermalLevel, minSupportedFps: minSupported)
+
+        if target != appliedFps {
+            let supported = ranges.contains { Double(target) >= $0.minFrameRate && Double(target) <= $0.maxFrameRate }
+            guard supported else {
+                PegueiDiag.log("thermal step to \(target) fps skipped: not supported by active format")
+                return
+            }
+            do {
+                try device.lockForConfiguration()
+                let duration = CMTimeMake(value: 1, timescale: Int32(target))
+                device.activeVideoMinFrameDuration = duration
+                device.activeVideoMaxFrameDuration = duration
+                device.unlockForConfiguration()
+            } catch {
+                PegueiDiag.log("thermal step to \(target) fps failed: \(error.localizedDescription)")
+                return
+            }
+            PegueiDiag.log("thermal step \(appliedFps) -> \(target) fps (level=\(thermalLevel), configured=\(configuredFps))")
+            appliedFps = target
+            stateLock.lock()
+            activeFps = target
+            stateLock.unlock()
+        }
+
+        healthTracker.isThrottled = ThermalFpsPolicy.isThrottled(configuredFps: configuredFps, targetFps: appliedFps)
+        stateLock.lock()
+        let running = isRunning
+        stateLock.unlock()
+        if running {
+            publishHealth(reason: "thermal:\(thermalLevel)")
+        }
+    }
+
+    // MARK: Pocket mode (preview off, capture untouched)
+
+    /// Disables/enables the preview layer's connection so the preview isn't
+    /// composited while the screen is black anyway; capture, encode and the
+    /// ring buffer are untouched. Remembered, so the new connection a
+    /// restart/re-attach creates gets the same treatment.
+    func setPreviewSuppressed(_ suppressed: Bool) {
+        stateLock.lock()
+        previewSuppressed = suppressed
+        stateLock.unlock()
+        sessionQueue.async { [weak self] in
+            self?.applyPreviewSuppression()
+        }
+    }
+
+    /// Called on sessionQueue (after any reconfiguration it might race), but
+    /// the layer/connection mutation itself happens on main like any other
+    /// CALayer change.
+    fileprivate func applyPreviewSuppression() {
+        stateLock.lock()
+        let layer = previewLayer
+        let suppressed = previewSuppressed
+        stateLock.unlock()
+        guard let layer else { return }
+        DispatchQueue.main.async {
+            guard let connection = layer.connection, connection.isEnabled == suppressed else { return }
+            connection.isEnabled = !suppressed
+            PegueiDiag.log("preview connection enabled=\(!suppressed)")
+        }
     }
 }

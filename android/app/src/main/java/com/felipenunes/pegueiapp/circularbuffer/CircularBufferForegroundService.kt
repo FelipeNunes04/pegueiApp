@@ -1,5 +1,6 @@
 package com.felipenunes.pegueiapp.circularbuffer
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,6 +11,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -32,13 +34,58 @@ class CircularBufferForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Keeps the CPU awake while buffering with the screen off. A foreground
+     * service only protects the process from being killed -- it does not stop
+     * the CPU from suspending, and on several OEMs (and under Doze) the
+     * drain/audio/watchdog threads were otherwise left starved between
+     * camera interrupts, stalling the encoder output the ring buffer depends
+     * on. Partial (CPU only -- screen and keyboard backlight are untouched),
+     * non-reference-counted so repeated onStartCommand calls can't stack it,
+     * and held for exactly the service's lifetime, which is already exactly
+     * the buffer's lifetime (started/stopped in lockstep with
+     * startBuffering()/stopBuffering()) -- hence no timeout.
+     */
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (t: Throwable) {
+            // Non-fatal, same philosophy as the foreground promotion below.
+            Log.e(TAG, "Failed to acquire wake lock", t)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.takeIf { it.isHeld }?.release()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to release wake lock", t)
+        }
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             CameraEncoderController.stop()
+            releaseWakeLock()
             emitStoppedExternally()
             stopSelf()
             return START_NOT_STICKY
         }
+        acquireWakeLock()
         try {
             createChannelIfNeeded()
             ServiceCompat.startForeground(
@@ -54,6 +101,7 @@ class CircularBufferForegroundService : Service() {
             // this app's existing "non-fatal, keep recording" philosophy
             // (see e.g. CameraEncoderController's audio-capture fallback).
             Log.e(TAG, "Failed to start foreground notification", t)
+            releaseWakeLock()
             stopSelf()
         }
         return START_NOT_STICKY
@@ -107,6 +155,7 @@ class CircularBufferForegroundService : Service() {
         private const val TAG = "CircularBuffer"
         private const val CHANNEL_ID = "circular_buffer_recording"
         private const val NOTIFICATION_ID = 1001
+        private const val WAKE_LOCK_TAG = "Peguei:buffer"
         private const val ACTION_STOP = "com.felipenunes.pegueiapp.circularbuffer.ACTION_STOP"
         const val EVENT_STOPPED_EXTERNALLY = "CircularBufferStoppedExternally"
 

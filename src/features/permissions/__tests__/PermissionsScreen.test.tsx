@@ -65,3 +65,30 @@ describe('PermissionsScreen', () => {
     expect(storageButton.props.accessibilityState.disabled).toBe(false);
   });
 });
+
+describe('PermissionsScreen battery optimization card', () => {
+  const { Platform } = require('react-native');
+  const originalOS = Platform.OS;
+
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  it('shows the non-blocking battery card on Android only, without gating navigation', async () => {
+    mockedUsePermissions.mockReturnValue({
+      statuses: { camera: 'denied', storage: 'denied', microphone: 'denied' },
+      requestPermission: jest.fn(),
+      refresh: jest.fn(),
+      allGranted: false,
+    });
+
+    Platform.OS = 'android';
+    const android = await render(<PermissionsScreen navigation={fakeNavigation} route={{} as never} />);
+    expect(android.getByTestId('battery-optimization-card')).toBeTruthy();
+    await android.unmount();
+
+    Platform.OS = 'ios';
+    const ios = await render(<PermissionsScreen navigation={fakeNavigation} route={{} as never} />);
+    expect(ios.queryByTestId('battery-optimization-card')).toBeNull();
+  });
+});

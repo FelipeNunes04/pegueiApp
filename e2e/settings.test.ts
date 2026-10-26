@@ -16,8 +16,10 @@ describe('Settings apply to the running buffer and persist', () => {
   beforeAll(async () => {
     await device.launchApp({
       newInstance: true,
-      permissions: { camera: 'YES', photos: 'YES', medialibrary: 'YES' },
+      delete: true,
+      permissions: { camera: 'YES', photos: 'YES', microphone: 'YES', medialibrary: 'YES' },
     });
+    await skipOnboardingIfPresent();
     await dismissPermissionsScreenIfPresent();
     await waitFor(element(by.id('camera-screen'))).toBeVisible().withTimeout(20000);
   });
@@ -26,10 +28,13 @@ describe('Settings apply to the running buffer and persist', () => {
     await element(by.id('open-settings')).tap();
     await waitFor(element(by.id('settings-screen'))).toBeVisible().withTimeout(10000);
 
-    // Push the buffer-seconds slider to its maximum (60s, see
-    // BUFFER_SECONDS_MAX) -- normalized position 1.0 avoids relying on
-    // precise pixel-drag math across screen sizes.
-    await element(by.id('buffer-seconds-slider')).adjustSliderToPosition(1.0);
+    // Drag the buffer-seconds slider all the way to its maximum (60s, see
+    // BUFFER_SECONDS_MAX). A real swipe, not adjustSliderToPosition(): the
+    // screen only commits the value in onSlidingComplete, which fires on
+    // touch-up, and adjustSliderToPosition() never lifts a finger. The swipe
+    // starts on the thumb at the 30s default -- (30 - 15) / (60 - 15) of the
+    // track -- since UISlider ignores drags that don't begin on it.
+    await element(by.id('buffer-seconds-slider')).swipe('right', 'slow', 1.0, 0.34, 0.5);
 
     await element(by.id('settings-back')).tap();
     await waitFor(element(by.id('camera-screen'))).toBeVisible().withTimeout(10000);
@@ -100,6 +105,12 @@ describe('Settings apply to the running buffer and persist', () => {
     await waitFor(element(by.text('60s'))).toBeVisible().withTimeout(10000);
   });
 });
+
+async function skipOnboardingIfPresent(): Promise<void> {
+  if (await isVisible('onboarding-screen')) {
+    await element(by.id('onboarding-skip')).tap();
+  }
+}
 
 async function dismissPermissionsScreenIfPresent(): Promise<void> {
   try {

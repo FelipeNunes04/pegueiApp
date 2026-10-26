@@ -15,6 +15,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bottomArea: {
     position: 'absolute',
     bottom: 0,
