@@ -17,9 +17,6 @@ function resolvePermission(key: PermissionKey): Permission | null {
     switch (key) {
       case 'camera':
         return PERMISSIONS.ANDROID.CAMERA;
-      case 'storage':
-        // Android 13+ (API 33) scoped media permissions; below that, WRITE_EXTERNAL_STORAGE.
-        return Platform.Version >= 33 ? PERMISSIONS.ANDROID.READ_MEDIA_VIDEO : PERMISSIONS.ANDROID.WRITE_EXTERNAL_STORAGE;
       case 'microphone':
         return PERMISSIONS.ANDROID.RECORD_AUDIO;
     }
@@ -28,8 +25,6 @@ function resolvePermission(key: PermissionKey): Permission | null {
     switch (key) {
       case 'camera':
         return PERMISSIONS.IOS.CAMERA;
-      case 'storage':
-        return PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY;
       case 'microphone':
         return PERMISSIONS.IOS.MICROPHONE;
     }
@@ -52,12 +47,14 @@ function toStatus(result: string): PermissionStatus {
   }
 }
 
-const KEYS: PermissionKey[] = ['camera', 'storage', 'microphone'];
+// No storage/photos permission on either platform: clips live in app-private
+// storage, and saving to Photos only happens through the system share sheet,
+// which asks for access on its own (see DECISIONS.md, "saving to Photos").
+const KEYS: PermissionKey[] = ['camera', 'microphone'];
 
 export function usePermissions() {
   const [statuses, setStatuses] = useState<PermissionMap>({
     camera: 'unknown',
-    storage: 'unknown',
     microphone: 'unknown',
   });
   // False until the first refresh() resolves -- lets a caller (App.tsx)

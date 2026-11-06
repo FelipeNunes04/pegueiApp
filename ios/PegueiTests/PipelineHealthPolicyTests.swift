@@ -180,6 +180,98 @@ final class PipelineHealthPolicyTests: XCTestCase {
         XCTAssertNotNil(SaveVerification.failureReason(fileExists: true, fileSizeBytes: 4096, videoTrackCount: 0))
     }
 
+    func testSaveVerificationKeepsAFileWhoseTrackLoadTimedOut() {
+        XCTAssertNil(SaveVerification.failureReason(fileExists: true, fileSizeBytes: 4096, videoTrackCount: nil))
+        // Unverified only excuses the track check, not a missing or empty file.
+        XCTAssertNotNil(SaveVerification.failureReason(fileExists: false, fileSizeBytes: 0, videoTrackCount: nil))
+        XCTAssertNotNil(SaveVerification.failureReason(fileExists: true, fileSizeBytes: 0, videoTrackCount: nil))
+    }
+
+    // MARK: - SaveTimeouts
+
+    func testSaveTimeoutsKeepTheOldLimitsAsFloorsForShortClips() {
+        XCTAssertEqual(SaveTimeouts.mux(clipDurationSeconds: 5, totalBytes: 5_000_000), 30)
+        XCTAssertEqual(SaveTimeouts.finish(totalBytes: 5_000_000), 10)
+    }
+
+    func testSaveTimeoutsScaleWithLongHighBitrateClips() {
+        let bytes = 512 * 1024 * 1024
+        XCTAssertEqual(SaveTimeouts.mux(clipDurationSeconds: 70, totalBytes: bytes), 35 + 64)
+        XCTAssertEqual(SaveTimeouts.finish(totalBytes: bytes), 16)
+    }
+
+    func testSaveTimeoutsAreCapped() {
+        XCTAssertEqual(SaveTimeouts.mux(clipDurationSeconds: 100_000, totalBytes: 0), SaveTimeouts.ceilingSeconds)
+        XCTAssertEqual(SaveTimeouts.finish(totalBytes: Int.max / 2), SaveTimeouts.ceilingSeconds)
+    }
+
+    // MARK: - ManualRecordingMemoryPolicy
+
+    func testMemoryCapUsesTheBaseCapForOrdinaryPreRolls() {
+        XCTAssertEqual(ManualRecordingMemoryPolicy.capBytes(headBytes: 50 * 1024 * 1024), ManualRecordingMemoryPolicy.baseCapBytes)
+    }
+
+    func testMemoryCapLeavesRoomForATailAfterAHugePreRoll() {
+        let head = 450 * 1024 * 1024
+        XCTAssertEqual(ManualRecordingMemoryPolicy.capBytes(headBytes: head), head + ManualRecordingMemoryPolicy.minTailAllowanceBytes)
+    }
+
+    func testMemoryPolicyFinalizesAtTheCap() {
+        let plenty: UInt64 = 2 * 1024 * 1024 * 1024
+        XCTAssertFalse(ManualRecordingMemoryPolicy.shouldFinalize(recordedBytes: 99, capBytes: 100, availableMemoryBytes: plenty))
+        XCTAssertTrue(ManualRecordingMemoryPolicy.shouldFinalize(recordedBytes: 100, capBytes: 100, availableMemoryBytes: plenty))
+    }
+
+    func testMemoryPolicyFinalizesWhenTheOSIsRunningOutButTreatsZeroAsUnknown() {
+        let low = ManualRecordingMemoryPolicy.minAvailableMemoryBytes - 1
+        XCTAssertTrue(ManualRecordingMemoryPolicy.shouldFinalize(recordedBytes: 1, capBytes: 100, availableMemoryBytes: low))
+        XCTAssertFalse(ManualRecordingMemoryPolicy.shouldFinalize(recordedBytes: 1, capBytes: 100, availableMemoryBytes: 0))
+    }
+
+    // MARK: - RecoveryBudget
+
+    func testRecoveryBudgetRunsOutSoRepeatedErrorsReachGiveUp() {
+        var budget = RecoveryBudget(maxActions: 3, window: 100)
+        XCTAssertTrue(budget.consume(now: 0))
+        XCTAssertTrue(budget.consume(now: 1))
+        XCTAssertTrue(budget.consume(now: 2))
+        XCTAssertFalse(budget.consume(now: 3))
+        XCTAssertFalse(budget.consume(now: 50))
+    }
+
+    func testRecoveryBudgetAgesOutOldActions() {
+        var budget = RecoveryBudget(maxActions: 2, window: 100)
+        XCTAssertTrue(budget.consume(now: 0))
+        XCTAssertTrue(budget.consume(now: 60))
+        XCTAssertFalse(budget.consume(now: 99))
+        // The action at t=0 has left the window, the one at t=60 hasn't.
+        XCTAssertTrue(budget.consume(now: 100))
+        XCTAssertFalse(budget.consume(now: 101))
+    }
+
+    func testRecoveryBudgetDeniedAttemptsDontExtendTheLockout() {
+        var budget = RecoveryBudget(maxActions: 1, window: 100)
+        XCTAssertTrue(budget.consume(now: 0))
+        XCTAssertFalse(budget.consume(now: 99))
+        XCTAssertTrue(budget.consume(now: 100))
+    }
+
+    func testRecoveryBudgetResetRefills() {
+        var budget = RecoveryBudget(maxActions: 1, window: 100)
+        XCTAssertTrue(budget.consume(now: 0))
+        XCTAssertFalse(budget.consume(now: 1))
+        budget.reset()
+        XCTAssertTrue(budget.consume(now: 2))
+    }
+
+    func testRecoveryBudgetDefaultCoversTheWatchdogLadder() {
+        var budget = RecoveryBudget()
+        let ladderRestarts = FrameFlowWatchdog().maxPipelineRestarts
+        for second in 0..<ladderRestarts {
+            XCTAssertTrue(budget.consume(now: TimeInterval(second)))
+        }
+    }
+
     // MARK: - BufferHealthTracker
 
     func testHealthPriorityOrder() {

@@ -8,7 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useOnboardingStore } from './store/onboardingStore';
 import {
@@ -55,7 +55,7 @@ const SLIDES: Slide[] = [
   {
     key: 'welcome',
     title: 'Tudo pronto',
-    body: 'Só faltam três permissões rápidas pra começar. Boa pescaria — ou o que você for capturar por aí.',
+    body: 'Só faltam duas permissões rápidas pra começar. Boa pescaria — ou o que você for capturar por aí.',
     Illustration: WelcomeIllustration,
   },
 ];
@@ -91,13 +91,16 @@ export function OnboardingScreen({ navigation }: Props) {
     setIndex(next);
   };
 
+  // Absolutely positioned children ignore SafeAreaView's padding.
+  const insets = useSafeAreaInsets();
+
   return (
     <View style={styles.container} testID="onboarding-screen">
       <SafeAreaView style={styles.safeArea}>
         {!isLast && (
           <Pressable
             onPress={() => finish('skipped')}
-            style={styles.skip}
+            style={[styles.skip, { top: insets.top + styles.skip.top }]}
             testID="onboarding-skip"
           >
             <Text style={styles.skipText}>Pular</Text>

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Dimensions, ScrollView } from 'react-native';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { Dimensions, ScrollView, StyleSheet } from 'react-native';
+import { act, fireEvent, render as baseRender, type RenderOptions } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import analytics from '@react-native-firebase/analytics';
 import { OnboardingScreen } from '../OnboardingScreen';
 import { useOnboardingStore } from '../store/onboardingStore';
@@ -8,6 +9,18 @@ import { useOnboardingStore } from '../store/onboardingStore';
 const replaceMock = jest.fn();
 const fakeNavigation = { replace: replaceMock } as never;
 const mockedLogEvent = analytics().logEvent as jest.Mock;
+const STATUS_BAR_INSET = 59;
+const safeAreaMetrics = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: STATUS_BAR_INSET, right: 0, bottom: 34, left: 0 },
+};
+
+function SafeAreaWrapper({ children }: { children: React.ReactNode }) {
+  return <SafeAreaProvider initialMetrics={safeAreaMetrics}>{children}</SafeAreaProvider>;
+}
+
+const render = (ui: React.ReactElement, options?: RenderOptions) =>
+  baseRender(ui, { wrapper: SafeAreaWrapper, ...options });
 
 describe('OnboardingScreen', () => {
   beforeEach(() => {
@@ -34,6 +47,12 @@ describe('OnboardingScreen', () => {
     expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
     expect(replaceMock).toHaveBeenCalledWith('Permissions');
     expect(mockedLogEvent).toHaveBeenCalledWith('onboarding_skipped');
+  });
+
+  it('keeps "Pular" below the status bar', async () => {
+    const { getByTestId } = await render(<OnboardingScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(StyleSheet.flatten(getByTestId('onboarding-skip').props.style).top).toBeGreaterThanOrEqual(STATUS_BAR_INSET);
   });
 
   it('never mentions paid plans or subscriptions anywhere in the copy', async () => {

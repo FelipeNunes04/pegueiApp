@@ -7,6 +7,7 @@ import android.media.MediaActionSound
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -75,6 +76,48 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
         }
     }
 
+    /**
+     * `CircularBufferRecordingFinalized` (shared contract with iOS/JS):
+     * `{ reason, path?, durationSeconds?, error? }`, emitted when native ends an
+     * in-flight manual recording on its own. Same emission path as [emitError].
+     */
+    private fun emitRecordingFinalized(reason: String, path: String?, durationSeconds: Double?, error: String?) {
+        val params = Arguments.createMap()
+        params.putString("reason", reason)
+        if (path != null) params.putString("path", path)
+        if (durationSeconds != null) params.putDouble("durationSeconds", durationSeconds)
+        if (error != null) params.putString("error", error)
+        if (reactApplicationContext.hasActiveReactInstance()) {
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(EVENT_RECORDING_FINALIZED, params)
+        }
+    }
+
+    /**
+     * RN reload/teardown: JS is gone, so nothing would ever call stopBuffering()
+     * or undo pocket mode. Saves any in-flight recording (the clip lands in
+     * PegueiClips even though no JS is left to hear about it) and stops the
+     * camera, service and wake lock; a reload's JS starts the buffer afresh.
+     * Not reached by merely destroying the Activity (swipe from Recents), which
+     * must keep recording -- that doesn't tear down the ReactHost.
+     */
+    override fun invalidate() {
+        CameraEncoderController.hardwareTriggerEnabled = false
+        try {
+            CameraEncoderController.stop()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to stop buffering on invalidate", t)
+        }
+        try {
+            CircularBufferForegroundService.stop(reactApplicationContext)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to stop foreground service on invalidate", t)
+        }
+        applyPocketBrightness(false)
+        super.invalidate()
+    }
+
     @ReactMethod
     fun startBuffering(config: ReadableMap, promise: Promise) {
         try {
@@ -84,6 +127,20 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                 height = config.getInt("height"),
                 fps = config.getInt("fps"),
             )
+            // Always started alongside buffering (never only-when-backgrounded), so it's
+            // always started from this foreground-privileged call -- sidesteps Android
+            // 12+'s restriction on starting a foreground service from the background
+            // entirely. Wrapped defensively: if the OS refuses foreground promotion for
+            // any reason, buffering still works fine while the app stays foregrounded --
+            // only background survival degrades, not the core feature. Started before
+            // arming so an open that fails synchronously in there can release it again.
+            if (FeatureFlags.BACKGROUND_RECORDING_ENABLED) {
+                try {
+                    CircularBufferForegroundService.start(reactApplicationContext)
+                } catch (_: Throwable) {
+                    // non-fatal, see comment above
+                }
+            }
             CameraEncoderController.configureAndArm(
                 reactApplicationContext,
                 bufferConfig,
@@ -95,23 +152,18 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
                     override fun onHealth(state: String, reason: String?) {
                         emitHealth(state, reason)
                     }
+
+                    override fun onRecordingFinalized(reason: String, path: String?, durationSeconds: Double?, error: String?) {
+                        emitRecordingFinalized(reason, path, durationSeconds, error)
+                    }
                 },
             )
-            // Always started alongside buffering (never only-when-backgrounded), so it's
-            // always started from this foreground-privileged call -- sidesteps Android
-            // 12+'s restriction on starting a foreground service from the background
-            // entirely. Wrapped defensively: if the OS refuses foreground promotion for
-            // any reason, buffering still works fine while the app stays foregrounded --
-            // only background survival degrades, not the core feature.
-            if (FeatureFlags.BACKGROUND_RECORDING_ENABLED) {
-                try {
-                    CircularBufferForegroundService.start(reactApplicationContext)
-                } catch (_: Throwable) {
-                    // non-fatal, see comment above
-                }
-            }
             promise.resolve(null)
         } catch (t: Throwable) {
+            try {
+                CircularBufferForegroundService.stop(reactApplicationContext)
+            } catch (_: Throwable) {
+            }
             promise.reject(CircularBufferErrorCodes.ENCODER_INIT_FAILED, t.message, t)
         }
     }
@@ -277,7 +329,7 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
 
     /**
      * Gates MainActivity.dispatchKeyEvent's interception of volume / camera /
-     * media / enter keys (see decideHardwareKey in BufferPolicies.kt). Even
+     * media / enter keys (see HardwareKeyTracker in BufferPolicies.kt). Even
      * when enabled, keys are only intercepted while the buffer is actually
      * running, so volume keeps working everywhere else in the app.
      */
@@ -340,7 +392,9 @@ class CircularBufferModule(reactContext: ReactApplicationContext) : ReactContext
     }
 
     companion object {
+        private const val TAG = "CircularBuffer"
         const val EVENT_HEALTH = "CircularBufferHealth"
+        const val EVENT_RECORDING_FINALIZED = "CircularBufferRecordingFinalized"
         const val EVENT_HARDWARE_TRIGGER = "CircularBufferHardwareTrigger"
     }
 }

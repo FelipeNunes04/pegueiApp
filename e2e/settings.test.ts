@@ -118,7 +118,7 @@ async function dismissPermissionsScreenIfPresent(): Promise<void> {
   } catch {
     return;
   }
-  for (const key of ['permission-card-camera', 'permission-card-storage']) {
+  for (const key of ['permission-card-camera', 'permission-card-microphone']) {
     await element(by.id(key)).tap().catch(() => undefined);
   }
 }

@@ -26,6 +26,8 @@ import { styles } from './CameraScreen.styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Camera'>;
 
+const NOTICE_DURATION_MS = 6000;
+
 export function CameraScreen({ navigation }: Props) {
   const { phase, start, stop, startRecording, stopRecording } =
     useCircularBuffer();
@@ -35,6 +37,8 @@ export function CameraScreen({ navigation }: Props) {
   const bufferHealth = useRecordingStore(s => s.bufferHealth);
   const errorMessage = useRecordingStore(s => s.errorMessage);
   const clearError = useRecordingStore(s => s.clearError);
+  const noticeMessage = useRecordingStore(s => s.noticeMessage);
+  const clearNotice = useRecordingStore(s => s.clearNotice);
   const clips = useRecordingStore(s => s.clips);
   const setClips = useRecordingStore(s => s.setClips);
   const { zoomFactor, pillLevels, setZoom } = useZoom(phase);
@@ -103,6 +107,16 @@ export function CameraScreen({ navigation }: Props) {
   }, [navigation]);
 
   const pocketMode = usePocketMode(phase, isFocused);
+
+  // Held back while pocket mode's black overlay covers the banner, so the
+  // message is still there to read when the user comes back to the screen.
+  useEffect(() => {
+    if (!noticeMessage || pocketMode.isActive) {
+      return undefined;
+    }
+    const timer = setTimeout(clearNotice, NOTICE_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [noticeMessage, pocketMode.isActive, clearNotice]);
 
   // "Desligar buffer após inatividade": only counts down while plain
   // buffering (never during a manual recording/save) with this screen in
@@ -225,6 +239,15 @@ export function CameraScreen({ navigation }: Props) {
         <View style={styles.errorBanner} testID="error-banner">
           <Text style={styles.errorText}>{errorMessage}</Text>
           <Pressable onPress={clearError}>
+            <Text style={styles.errorDismiss}>Fechar</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {noticeMessage && !errorMessage && (
+        <View style={styles.noticeBanner} testID="notice-banner" accessibilityLiveRegion="polite">
+          <Text style={styles.errorText}>{noticeMessage}</Text>
+          <Pressable onPress={clearNotice}>
             <Text style={styles.errorDismiss}>Fechar</Text>
           </Pressable>
         </View>

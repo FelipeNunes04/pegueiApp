@@ -120,7 +120,6 @@ final class HardwareTriggerCoordinator {
         if let interaction, !isEnabled || interaction.view !== hostView || hostView == nil {
             interaction.view?.removeInteraction(interaction)
             self.interaction = nil
-            PegueiDiag.log("hardware trigger interaction detached")
         }
         guard isEnabled, let hostView, interaction == nil else { return }
         guard #available(iOS 17.2, *) else { return }
@@ -136,11 +135,9 @@ final class HardwareTriggerCoordinator {
         )
         hostView.addInteraction(newInteraction)
         interaction = newInteraction
-        PegueiDiag.log("hardware trigger interaction attached")
     }
 
     private func fire(_ source: String) {
-        PegueiDiag.log("hardware trigger source=\(source)")
         onTrigger?(source)
     }
 }

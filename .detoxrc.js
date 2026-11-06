@@ -38,11 +38,12 @@ module.exports = {
   devices: {
     simulator: {
       type: 'ios.simulator',
-      device: { type: 'iPhone 17 Pro' },
+      // Override with DETOX_IOS_DEVICE on machines without this simulator.
+      device: { type: process.env.DETOX_IOS_DEVICE || 'iPhone 17' },
     },
     emulator: {
       type: 'android.emulator',
-      device: { avdName: 'Pixel_API_34' },
+      device: { avdName: 'Pixel_9_Pro_XL_API_35' },
     },
     // App Store screenshot sizes: 6.9" (required) and 6.5" (legacy size
     // class App Store Connect still accepts screenshots for).

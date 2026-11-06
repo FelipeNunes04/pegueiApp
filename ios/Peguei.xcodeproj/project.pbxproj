@@ -21,6 +21,7 @@
 		73ECA0CC5AB4F71518051A26 /* CircularBufferPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2B5744229E2AB26569E9CB /* CircularBufferPreviewView.swift */; };
 		757D04E12166905F384577F4 /* FrameRingBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D13E62542662FB041A46CEBE /* FrameRingBuffer.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
+		7A1C5E002F00000100000001 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C5E002F00000100000002 /* SceneDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		8328827AFE9A2B75E98BF8CB /* EncodedFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C30E364D82CD91614748194 /* EncodedFrame.swift */; };
 		8875418B44B2973078A1C379 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
@@ -55,6 +56,7 @@
 		5709B34CF0A7D63546082F79 /* Pods-Peguei.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Peguei.release.xcconfig"; path = "Target Support Files/Pods-Peguei/Pods-Peguei.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-Peguei.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Peguei.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Peguei/AppDelegate.swift; sourceTree = "<group>"; };
+		7A1C5E002F00000100000002 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = Peguei/SceneDelegate.swift; sourceTree = "<group>"; };
 		76B1F8D5C73543FFA11774C9 /* AudioSampleRingBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioSampleRingBuffer.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Peguei/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		9FF63D78302C922A42EC57F3 /* CircularBufferPreviewViewManager.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = CircularBufferPreviewViewManager.m; sourceTree = "<group>"; };
@@ -92,6 +94,7 @@
 			children = (
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				7A1C5E002F00000100000002 /* SceneDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -380,6 +383,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				7A1C5E002F00000100000001 /* SceneDelegate.swift in Sources */,
 				8328827AFE9A2B75E98BF8CB /* EncodedFrame.swift in Sources */,
 				757D04E12166905F384577F4 /* FrameRingBuffer.swift in Sources */,
 				D453FEA191D0492799A10A3A /* AudioSampleRingBuffer.swift in Sources */,
@@ -428,7 +432,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -459,7 +463,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

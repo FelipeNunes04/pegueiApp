@@ -2,6 +2,7 @@ import AVFoundation
 import CoreMedia
 import VideoToolbox
 import UIKit
+import os
 
 struct BufferConfig {
     let bufferSeconds: Int
@@ -28,43 +29,27 @@ struct CaptureCapabilities {
     let fpsByQuality: [String: [Int]]
 }
 
-/// TEMPORARY diagnostics for the "Buffer vazio" investigation (2026-10-21):
-/// appends timestamped lines to Documents/peguei-diagnostics.log so a
-/// long on-device session can be pulled back with
-/// `xcrun devicectl device copy from --domain-type appDataContainer`.
-/// Remove once the root cause is confirmed.
-enum PegueiDiag {
-    private static let queue = DispatchQueue(label: "com.peguei.diag")
-    private static let formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let url: URL = FileManager.default
-        .urls(for: .documentDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("peguei-diagnostics.log")
-
-    static func log(_ message: String) {
-        let line = "\(formatter.string(from: Date())) \(message)\n"
-        NSLog("[PegueiDiag] %@", message)
-        queue.async {
-            guard let data = line.data(using: .utf8) else { return }
-            if let handle = try? FileHandle(forWritingTo: url) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? data.write(to: url)
-            }
-        }
-    }
-}
-
 protocol CameraEncoderControllerDelegate: AnyObject {
     func cameraEncoderController(_ controller: CameraEncoderController, didFailWithCode code: String, message: String)
     /// Fired only on transitions (see `BufferHealthTracker`), from
     /// sessionQueue. Becomes the `CircularBufferHealth` JS event.
     func cameraEncoderController(_ controller: CameraEncoderController, didChangeHealth state: BufferHealthState, reason: String?)
+    /// Native ended an in-flight manual recording on its own and finished
+    /// saving what it had. Fires on a background queue, exactly once per cut
+    /// recording: `path`/`durationSeconds` on success, `error` on failure.
+    /// Becomes the `CircularBufferRecordingFinalized` JS event.
+    func cameraEncoderController(_ controller: CameraEncoderController, didFinalizeRecordingWithReason reason: RecordingFinalizeReason, path: String?, durationSeconds: Double?, error: String?)
+}
+
+/// Why native ended a manual recording without `stopManualRecording()`. Raw
+/// values are the exact strings of the event's `reason` field.
+enum RecordingFinalizeReason: String {
+    /// The pipeline was stopped (stopBuffering, or the preview left the window).
+    case stopped
+    /// An encoder rebuild, pipeline restart or give-up cut the recording.
+    case recovery
+    /// `ManualRecordingMemoryPolicy` tripped.
+    case memoryLimit
 }
 
 /// Thread-safe one-value box for handing a result out of an `@Sendable`
@@ -81,6 +66,86 @@ private final class TrackCountBox: @unchecked Sendable {
     func get() -> Int {
         lock.lock(); defer { lock.unlock() }
         return value
+    }
+}
+
+/// Feeds one AVAssetWriterInput from its own serial queue via
+/// requestMediaDataWhenReady (see the comment in `finalizeSave` for why each
+/// track needs that) and accounts for it in a shared DispatchGroup. All state
+/// is confined to `queue`, which is also what lets `abort()` guarantee no
+/// append is running on return: `AVAssetWriter.cancelWriting()` must not be
+/// called concurrently with `append`.
+private final class MuxTrackPump: @unchecked Sendable {
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let group: DispatchGroup
+    private let queue: DispatchQueue
+    private var isDone = false
+    private var failed = false
+    /// Read by the running loop, set from outside it: abort() can't wait for
+    /// `queue` alone, since the loop holds it for as long as the input stays
+    /// ready, which on a long clip can be most of the clip.
+    private let abortLock = NSLock()
+    private var abortRequested = false
+
+    init(writer: AVAssetWriter, input: AVAssetWriterInput, group: DispatchGroup, label: String) {
+        self.writer = writer
+        self.input = input
+        self.group = group
+        self.queue = DispatchQueue(label: label)
+    }
+
+    /// Samples that can't be rebuilt (`makeSample` returning nil) are skipped.
+    func start(sampleCount: Int, makeSample: @escaping (Int) -> CMSampleBuffer?) {
+        group.enter()
+        var index = 0
+        input.requestMediaDataWhenReady(on: queue) { [self] in
+            while !isDone, !isAbortRequested, input.isReadyForMoreMediaData {
+                guard writer.status == .writing else {
+                    finish(failed: true)
+                    return
+                }
+                guard index < sampleCount else {
+                    finish(failed: false)
+                    return
+                }
+                let sample = makeSample(index)
+                index += 1
+                guard let sample else { continue }
+                if !input.append(sample) {
+                    finish(failed: true)
+                    return
+                }
+            }
+        }
+    }
+
+    private func finish(failed: Bool) {
+        isDone = true
+        self.failed = failed
+        input.markAsFinished()
+        group.leave()
+    }
+
+    /// Stops a pump that hasn't finished on its own. Blocks until any append
+    /// in flight has returned, so call it off the thread that must not hang.
+    func abort() {
+        abortLock.lock()
+        abortRequested = true
+        abortLock.unlock()
+        queue.sync {
+            guard !isDone else { return }
+            finish(failed: true)
+        }
+    }
+
+    var didFail: Bool {
+        queue.sync { failed }
+    }
+
+    private var isAbortRequested: Bool {
+        abortLock.lock(); defer { abortLock.unlock() }
+        return abortRequested
     }
 }
 
@@ -160,14 +225,15 @@ final class CameraEncoderController: NSObject {
     /// Pocket mode: the preview layer's connection is disabled so nothing
     /// is composited, while capture/encode keep running untouched.
     private var previewSuppressed = false
-    /// A manual recording that a rebuild/restart finalized early, waiting to
-    /// be handed to JS by its `stopManualRecording` call.
-    private var detachedSave: DetachedSave?
 
     // sessionQueue-confined (only ever read/written from blocks running on
     // sessionQueue, so no lock):
 
     private var watchdog = FrameFlowWatchdog()
+    private var recoveryBudget = RecoveryBudget()
+    /// When the encoder was last rebuilt: a rebuild with no encoded frame
+    /// since the previous one means rebuilding isn't helping.
+    private var lastEncoderRebuildUptime: TimeInterval?
     private var healthTracker = BufferHealthTracker()
     private var watchdogTimer: DispatchSourceTimer?
     private var isSessionInterrupted = false
@@ -200,100 +266,29 @@ final class CameraEncoderController: NSObject {
     private var reliabilityObservers: [NSObjectProtocol] = []
 
     private static var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    private static let repeatRebuildInterval: TimeInterval = 1
 
-    // TEMPORARY diagnostics, see PegueiDiag.
-    private let diagLock = NSLock()
-    private var diagCapturedFrames = 0
-    private var diagEncodedFrames = 0
-    private var diagEncodeErrors = 0
-    private var diagLastEncodeError: OSStatus = noErr
-    private var diagObservers: [NSObjectProtocol] = []
-    private var diagPressureObservation: NSKeyValueObservation?
-    private var diagTimer: DispatchSourceTimer?
+    private var pressureObservation: NSKeyValueObservation?
 
     private override init() {
         super.init()
-        installDiagnostics()
+        Self.removeLeftoverDiagnosticsLog()
         installReliabilityMonitoring()
     }
 
-    private func installDiagnostics() {
-        PegueiDiag.log("diag installed, thermal=\(ProcessInfo.processInfo.thermalState.rawValue)")
-        let center = NotificationCenter.default
-        diagObservers.append(center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { note in
-            let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
-            PegueiDiag.log("session RUNTIME ERROR code=\(error?.code ?? 0) \(error?.localizedDescription ?? "nil")")
-        })
-        diagObservers.append(center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { note in
-            let reason = note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int ?? -1
-            PegueiDiag.log("session INTERRUPTED reason=\(reason)")
-        })
-        diagObservers.append(center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { _ in
-            PegueiDiag.log("session interruption ended")
-        })
-        diagObservers.append(center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { _ in
-            PegueiDiag.log("session didStartRunning")
-        })
-        diagObservers.append(center.addObserver(forName: .AVCaptureSessionDidStopRunning, object: session, queue: nil) { _ in
-            PegueiDiag.log("session didStopRunning")
-        })
-        diagObservers.append(center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { _ in
-            PegueiDiag.log("thermalState -> \(ProcessInfo.processInfo.thermalState.rawValue)")
-        })
-        diagObservers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
-            PegueiDiag.log("app didEnterBackground")
-        })
-        diagObservers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { _ in
-            PegueiDiag.log("app willEnterForeground")
-        })
-        diagObservers.append(center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { _ in
-            PegueiDiag.log("MEMORY WARNING")
-        })
-        diagObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { note in
-            let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 99
-            PegueiDiag.log("audio session interruption type=\(type)")
-        })
-        diagObservers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { _ in
-            PegueiDiag.log("MEDIA SERVICES WERE RESET")
-        })
-
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "com.peguei.diag.heartbeat"))
-        timer.schedule(deadline: .now() + 30, repeating: 30)
-        timer.setEventHandler { [weak self] in self?.logHeartbeat() }
-        timer.resume()
-        diagTimer = timer
-    }
-
-    private func logHeartbeat() {
-        diagLock.lock()
-        let captured = diagCapturedFrames, encoded = diagEncodedFrames
-        let errors = diagEncodeErrors, lastError = diagLastEncodeError
-        diagLock.unlock()
-        stateLock.lock()
-        let running = isRunning
-        let ringSize = ringBuffer?.size ?? -1
-        let audioSize = audioRingBuffer?.size ?? -1
-        let hasCompression = compressionSession != nil
-        stateLock.unlock()
-        PegueiDiag.log("heartbeat isRunning=\(running) session.isRunning=\(session.isRunning) interrupted=\(session.isInterrupted) captured=\(captured) encoded=\(encoded) encodeErrors=\(errors) lastErr=\(lastError) ring=\(ringSize) audioRing=\(audioSize) vt=\(hasCompression) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) mem=\(Self.memoryFootprintMB())MB")
-    }
-
-    private static func memoryFootprintMB() -> Int {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
+    /// Versions up to 1.1.1 appended to Documents/peguei-diagnostics.log with
+    /// no size bound; the logger is gone, but the file it left behind on
+    /// users' devices has to be cleaned up.
+    private static func removeLeftoverDiagnosticsLog() {
+        DispatchQueue.global(qos: .utility).async {
+            guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+            try? FileManager.default.removeItem(at: documents.appendingPathComponent("peguei-diagnostics.log"))
         }
-        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
     private func observeSystemPressure(of device: AVCaptureDevice) {
-        diagPressureObservation = device.observe(\.systemPressureState, options: [.initial, .new]) { [weak self] device, _ in
-            let state = device.systemPressureState
-            PegueiDiag.log("systemPressure level=\(state.level.rawValue) factors=\(state.factors.rawValue)")
-            self?.systemPressureChanged(to: state.level, on: device)
+        pressureObservation = device.observe(\.systemPressureState, options: [.initial, .new]) { [weak self] device, _ in
+            self?.systemPressureChanged(to: device.systemPressureState.level, on: device)
         }
     }
 
@@ -302,41 +297,21 @@ final class CameraEncoderController: NSObject {
     /// keeps accumulating every frame the encoder produces for as long as
     /// recording continues, with no fixed target duration -- the user's own
     /// "stop" tap is what ends it (see `stopManualRecording`).
-    private struct PendingSave {
+    fileprivate struct PendingSave {
         let headFrames: [EncodedFrame]
         var tailFrames: [EncodedFrame] = []
         let audioHeadFrames: [AudioSampleFrame]
         var audioTailFrames: [AudioSampleFrame] = []
         let outputURL: URL
         let fps: Int
+        /// Encoded + PCM bytes held by this recording, head included, and the
+        /// amount at which `ManualRecordingMemoryPolicy` ends it.
+        var recordedBytes: Int
+        let capBytes: Int
     }
 
     private var pendingSave: PendingSave?
     private let stateLock = NSLock()
-
-    private enum SaveOutcome {
-        case saved(path: String, durationSeconds: Double)
-        case failed(code: String, message: String)
-    }
-
-    private struct SaveWaiter {
-        let onSaved: (String, Double) -> Void
-        let onFailed: (String, String) -> Void
-    }
-
-    /// A manual recording cut short by `rebuildEncoder`/`restartPipeline`:
-    /// it's finalized immediately with the frames it already has (all from
-    /// one encoder generation) rather than continuing across the format
-    /// change. JS still believes it's recording, so the result is parked
-    /// here until its `stopManualRecording` arrives -- whichever of
-    /// "finalize finished" / "JS asked" happens second delivers it.
-    /// `outputURL` identifies it, so a late-finishing finalize can't fill
-    /// the slot of a newer detached clip.
-    private struct DetachedSave {
-        let outputURL: URL
-        var outcome: SaveOutcome?
-        var waiter: SaveWaiter?
-    }
 
     /// The truth, not the intent: `isRunning` is set to false whenever the
     /// pipeline is torn down -- including when the watchdog gives up after
@@ -390,8 +365,12 @@ final class CameraEncoderController: NSObject {
     func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
         stateLock.lock()
         previewLayer = layer
-        layer.session = session
         stateLock.unlock()
+        // Outside stateLock: this setter synchronizes with the session's
+        // internal lock, which startRunning()/stopRunning() on sessionQueue
+        // can hold while the capture callbacks wait on stateLock -- holding
+        // stateLock here could deadlock the main thread against them.
+        layer.session = session
 
         // See the comment in configureAndArm() -- same reasoning applies here.
         sessionQueue.async { [weak self] in
@@ -515,7 +494,6 @@ final class CameraEncoderController: NSObject {
             self.activeDevice = device
             self.deviceLock.unlock()
             self.observeSystemPressure(of: device)
-            PegueiDiag.log("openCameraAndStart device=\(device.deviceType.rawValue) \(config.width)x\(config.height)@\(config.fps) buffer=\(config.bufferSeconds)s")
 
             // Picking an explicit AVCaptureDevice.Format (rather than
             // leaving the session on a fixed preset) is what actually
@@ -639,6 +617,7 @@ final class CameraEncoderController: NSObject {
         self.stateLock.lock()
         self.isRunning = true
         self.stateLock.unlock()
+        self.startWatchdogTimer()
 
         // Reliability bookkeeping (all sessionQueue-confined). An ordinary
         // start wipes the slate: fresh watchdog window, fresh health state,
@@ -655,6 +634,8 @@ final class CameraEncoderController: NSObject {
             self.watchdog.restartWindow(now: now)
         } else {
             self.watchdog.reset(now: now)
+            self.recoveryBudget.reset()
+            self.lastEncoderRebuildUptime = nil
             self.healthTracker.reset()
             self.healthTracker.isInterrupted = self.isSessionInterrupted
             self.recoveringSince = nil
@@ -663,7 +644,6 @@ final class CameraEncoderController: NSObject {
         if self.isSessionInterrupted {
             self.publishHealth(reason: "interruptedAtStart")
         }
-        PegueiDiag.log("pipeline started recoveryRestart=\(isRecoveryRestart) session.isRunning=\(self.session.isRunning) interrupted=\(self.isSessionInterrupted)")
 
         // Inputs/outputs were just removed and re-added, which gives the
         // preview layer a brand-new connection (enabled by default) -- pocket
@@ -871,7 +851,6 @@ final class CameraEncoderController: NSObject {
         )
 
         guard status == noErr, let compressionSession = session else {
-            PegueiDiag.log("VTCompressionSessionCreate failed status=\(status)")
             return nil
         }
 
@@ -895,38 +874,21 @@ final class CameraEncoderController: NSObject {
     /// function (no captures) -- state travels through `outputCallbackRefCon`
     /// (the controller) and `sourceFrameRefCon` (the `encoderGeneration` the
     /// frame was submitted under, see `captureOutput`).
-    private let compressionOutputCallback: VTCompressionOutputCallback = { refcon, sourceFrameRefcon, status, infoFlags, sampleBuffer in
+    private let compressionOutputCallback: VTCompressionOutputCallback = { refcon, sourceFrameRefcon, status, _, sampleBuffer in
         guard let refcon else { return }
         let controller = Unmanaged<CameraEncoderController>.fromOpaque(refcon).takeUnretainedValue()
         let generation = UInt(bitPattern: sourceFrameRefcon)
         guard status == noErr, let sampleBuffer else {
-            controller.recordEncodeError(status, stage: "callback")
             // status == noErr with no sample buffer is a frame the encoder
             // chose to drop (kVTEncodeInfo_FrameDropped under real-time
             // pressure) -- normal, not a fault, so it doesn't count toward
             // the recreate policy.
             if status != noErr {
                 controller.noteEncoderError(status, generation: generation)
-            } else if !infoFlags.contains(.frameDropped) {
-                PegueiDiag.log("encoder callback with noErr and no sample buffer, flags=\(infoFlags.rawValue)")
             }
             return
         }
-        controller.diagLock.lock()
-        controller.diagEncodedFrames += 1
-        controller.diagLock.unlock()
         controller.handleEncodedSampleBuffer(sampleBuffer, generation: generation)
-    }
-
-    private func recordEncodeError(_ status: OSStatus, stage: String) {
-        diagLock.lock()
-        diagEncodeErrors += 1
-        let isNewError = status != diagLastEncodeError
-        diagLastEncodeError = status
-        diagLock.unlock()
-        if isNewError {
-            PegueiDiag.log("ENCODE ERROR stage=\(stage) status=\(status)")
-        }
     }
 
     /// Feeds an encode failure (from `VTCompressionSessionEncodeFrame` or
@@ -940,7 +902,6 @@ final class CameraEncoderController: NSObject {
         let shouldRebuild = isRunning && generation == encoderGeneration && encoderErrorPolicy.recordError(status: status)
         stateLock.unlock()
         guard shouldRebuild else { return }
-        PegueiDiag.log("encoder error policy -> rebuild (status=\(status) generation=\(generation))")
         sessionQueue.async { [weak self] in
             self?.rebuildEncoder(reason: "encodeError \(status)", expectedGeneration: generation)
         }
@@ -973,9 +934,9 @@ final class CameraEncoderController: NSObject {
         // frame from the old session could land in the ring buffer *after*
         // the rebuild cleared it, and finalizeSave would then mux it under
         // the new session's SPS/PPS: a corrupt clip, i.e. exactly the
-        // "never mix formats" rule the rebuild exists to uphold. No auto-stop
-        // target here -- a manual recording only ends when
-        // stopManualRecording() is called explicitly.
+        // "never mix formats" rule the rebuild exists to uphold. The only
+        // auto-stop here is the memory cap; otherwise a manual recording ends
+        // when stopManualRecording() is called or the pipeline goes away.
         stateLock.lock()
         guard generation == encoderGeneration else {
             stateLock.unlock()
@@ -987,10 +948,26 @@ final class CameraEncoderController: NSObject {
         encoderErrorPolicy.recordSuccess()
         lastEncodedFrameUptime = Self.uptime
         ringBuffer?.add(frame)
+        var memoryLimitCut: EarlyFinalization?
         if pendingSave != nil {
             pendingSave!.tailFrames.append(frame)
+            pendingSave!.recordedBytes += data.count
+            if ManualRecordingMemoryPolicy.shouldFinalize(
+                recordedBytes: pendingSave!.recordedBytes,
+                capBytes: pendingSave!.capBytes,
+                availableMemoryBytes: UInt64(os_proc_available_memory())
+            ) {
+                memoryLimitCut = takePendingSaveForEarlyFinalizationLocked()
+                // Same reason as stopManualRecording: this footage is in the
+                // clip now and must not resurface as the next clip's pre-roll.
+                ringBuffer?.clear()
+                audioRingBuffer?.clear()
+            }
         }
         stateLock.unlock()
+        if let memoryLimitCut {
+            finalizeEarly(memoryLimitCut, reason: .memoryLimit)
+        }
     }
 
     private func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
@@ -1008,17 +985,27 @@ final class CameraEncoderController: NSObject {
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let ptsUs = Int64(pts.seconds * 1_000_000)
-        let frame = AudioSampleFrame(data: data, presentationTimeUs: ptsUs, numSamples: numSamples)
-        // Same single critical section as the video path: the format
-        // description, ring buffer and pending recording are swapped/
-        // snapshotted together under stateLock by stop/rebuild/teardown.
+        guard let incomingFormat = CMSampleBufferGetFormatDescription(sampleBuffer) else { return }
+        // Same single critical section as the video path: the ring buffer and
+        // pending recording are swapped/snapshotted together under stateLock
+        // by stop/rebuild/teardown. An audio route change (AirPods, HFP) can
+        // change the sample rate/channel layout mid-session, so every chunk
+        // carries its own format and `selectAudioTrack` sorts it out at save
+        // time. Keeping one instance per distinct format means retaining a
+        // pointer per chunk, not a description per chunk.
         stateLock.lock()
-        if audioFormatDescription == nil {
-            audioFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+        let format: CMFormatDescription
+        if let current = audioFormatDescription, CMFormatDescriptionEqual(current, otherFormatDescription: incomingFormat) {
+            format = current
+        } else {
+            format = incomingFormat
+            audioFormatDescription = incomingFormat
         }
+        let frame = AudioSampleFrame(data: data, presentationTimeUs: ptsUs, numSamples: numSamples, formatDescription: format)
         audioRingBuffer?.add(frame)
         if pendingSave != nil {
             pendingSave!.audioTailFrames.append(frame)
+            pendingSave!.recordedBytes += data.count
         }
         stateLock.unlock()
     }
@@ -1040,15 +1027,6 @@ final class CameraEncoderController: NSObject {
             stateLock.unlock()
             onFailed(CircularBufferErrorCode.saveFailed, "Já existe uma gravação em andamento.")
             return
-        }
-        // A clip that an encoder rebuild already finalized early but that JS
-        // never collected (it only ever collects it via
-        // stopManualRecording) is dropped here: JS starting a fresh
-        // recording means it no longer considers that one in flight. Its
-        // file -- if the early save succeeded -- is already in the gallery.
-        if let detached = detachedSave, detached.waiter == nil {
-            PegueiDiag.log("startManualRecording dropping uncollected detached save \(detached.outputURL.lastPathComponent)")
-            detachedSave = nil
         }
         stateLock.unlock()
 
@@ -1082,33 +1060,26 @@ final class CameraEncoderController: NSObject {
         }
         let head = buffer.snapshotFromOldestKeyframe()
         let audioHead = audioRingBuffer?.snapshot() ?? []
-        pendingSave = PendingSave(headFrames: head, audioHeadFrames: audioHead, outputURL: outputURL, fps: activeFps)
+        let videoHeadBytes = head.reduce(0) { $0 + $1.data.count }
+        let headBytes = audioHead.reduce(videoHeadBytes) { $0 + $1.data.count }
+        pendingSave = PendingSave(
+            headFrames: head,
+            audioHeadFrames: audioHead,
+            outputURL: outputURL,
+            fps: activeFps,
+            recordedBytes: headBytes,
+            capBytes: ManualRecordingMemoryPolicy.capBytes(headBytes: headBytes)
+        )
         stateLock.unlock()
-        PegueiDiag.log("startManualRecording head=\(head.count) audioHead=\(audioHead.count) session.isRunning=\(session.isRunning)")
         onStarted()
     }
 
     func stopManualRecording(onSaved: @escaping (String, Double) -> Void, onFailed: @escaping (String, String) -> Void) {
         stateLock.lock()
         guard let save = pendingSave else {
-            // The recording JS thinks is in flight may have been cut short
-            // and finalized early by an encoder rebuild / pipeline restart
-            // (see `takePendingSaveForEarlyFinalizationLocked`): hand back
-            // that clip's result now, or once its finalize completes.
-            if var detached = detachedSave {
-                if let outcome = detached.outcome {
-                    detachedSave = nil
-                    stateLock.unlock()
-                    PegueiDiag.log("stopManualRecording delivering detached save \(detached.outputURL.lastPathComponent)")
-                    Self.deliver(outcome, onSaved: onSaved, onFailed: onFailed)
-                } else {
-                    detached.waiter = SaveWaiter(onSaved: onSaved, onFailed: onFailed)
-                    detachedSave = detached
-                    stateLock.unlock()
-                    PegueiDiag.log("stopManualRecording waiting on detached save \(detached.outputURL.lastPathComponent)")
-                }
-                return
-            }
+            // Includes a recording native already ended on its own: its result
+            // goes out as the RecordingFinalized event, so this is JS's stop
+            // racing that (or a double stop), which JS tolerates.
             stateLock.unlock()
             onFailed(CircularBufferErrorCode.saveFailed, "Nenhuma gravação em andamento.")
             return
@@ -1119,9 +1090,7 @@ final class CameraEncoderController: NSObject {
         // later on a background queue: by then an encoder rebuild may
         // already have reset it to the *next* session's format.
         let videoFormat = formatDescription
-        let audioFormat = audioFormatDescription
         stateLock.unlock()
-        PegueiDiag.log("stopManualRecording head=\(save.headFrames.count) tail=\(save.tailFrames.count) audio=\(save.audioHeadFrames.count)+\(save.audioTailFrames.count)")
         // This clip's frames are already captured into `save` (headFrames/
         // tailFrames), decoupled from the ring buffers -- so clearing them
         // here is safe and necessary: otherwise footage already saved in
@@ -1130,45 +1099,77 @@ final class CameraEncoderController: NSObject {
         // duplicating content across consecutive clips.
         ringBuffer?.clear()
         audioRingBuffer?.clear()
-        finalizeSave(save, videoFormat: videoFormat, audioFormat: audioFormat, onSaved: onSaved, onFailed: onFailed)
+        finalizeSave(save, videoFormat: videoFormat, onSaved: onSaved, onFailed: onFailed)
     }
 
-    private static func deliver(_ outcome: SaveOutcome, onSaved: (String, Double) -> Void, onFailed: (String, String) -> Void) {
-        switch outcome {
-        case let .saved(path, duration):
-            onSaved(path, duration)
-        case let .failed(code, message):
-            onFailed(code, message)
+    /// The format a clip's audio track is written in, plus the chunks in it.
+    /// An AVAssetWriterInput takes one format, so after a mid-recording route
+    /// change the format that covers the most audio wins and the rest is
+    /// dropped (silence in those stretches): appending a mismatched chunk
+    /// would fail the input and with it the whole save.
+    private static func selectAudioTrack(from frames: [AudioSampleFrame]) -> (format: CMFormatDescription, frames: [AudioSampleFrame])? {
+        func same(_ a: CMFormatDescription, _ b: CMFormatDescription) -> Bool {
+            a === b || CMFormatDescriptionEqual(a, otherFormatDescription: b)
+        }
+        var groups: [(format: CMFormatDescription, seconds: Double)] = []
+        for frame in frames {
+            let rate = CMAudioFormatDescriptionGetStreamBasicDescription(frame.formatDescription)?.pointee.mSampleRate ?? 0
+            let seconds = rate > 0 ? Double(frame.numSamples) / rate : 0
+            if let index = groups.firstIndex(where: { same($0.format, frame.formatDescription) }) {
+                groups[index].seconds += seconds
+            } else {
+                groups.append((frame.formatDescription, seconds))
+            }
+        }
+        guard let winner = groups.max(by: { $0.seconds < $1.seconds }) else { return nil }
+        return (winner.format, frames.filter { same($0.formatDescription, winner.format) })
+    }
+
+    /// Every failure path after the writer exists goes through here, so a
+    /// failed save never leaves a partial .mp4 for the gallery to list. Done
+    /// off the calling thread with a bounded wait because both abort() and
+    /// cancelWriting() block, and a wedged writer must not turn into a save
+    /// whose result never arrives.
+    private static func abortSave(writer: AVAssetWriter?, pumps: [MuxTrackPump], outputURL: URL) {
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            pumps.forEach { $0.abort() }
+            writer?.cancelWriting()
+            try? FileManager.default.removeItem(at: outputURL)
+            done.signal()
+        }
+        if done.wait(timeout: .now() + 5) == .timedOut {
+            try? FileManager.default.removeItem(at: outputURL)
         }
     }
 
     private func finalizeSave(
         _ save: PendingSave,
         videoFormat: CMFormatDescription?,
-        audioFormat: CMFormatDescription?,
         onSaved: @escaping (String, Double) -> Void,
         onFailed: @escaping (String, String) -> Void
     ) {
         DispatchQueue.global(qos: .utility).async {
             guard let formatDescription = videoFormat else {
-                PegueiDiag.log("finalizeSave: no video format description (head=\(save.headFrames.count) tail=\(save.tailFrames.count))")
                 onFailed(CircularBufferErrorCode.saveFailed, "Formato do encoder ainda não disponível.")
                 return
             }
-            let audioFormatDescription = audioFormat
 
             let videoFrames = save.headFrames + save.tailFrames
             guard let startUs = videoFrames.first?.presentationTimeUs else {
                 onFailed(CircularBufferErrorCode.saveFailed, "Buffer vazio, nada para salvar.")
                 return
             }
+            let durationSeconds = Double(videoFrames.last!.presentationTimeUs - startUs) / 1_000_000.0
             // Audio capture starts independently of video (same
             // AVCaptureSession, but no guarantee which output's first
             // sample lands first) -- frames older than the video's own
             // start would rebase to a negative CMTime, which
             // CMSampleBufferCreateReady rejects. Dropping them is a few
             // milliseconds of lost pre-roll audio at most.
-            let audioFrames = (save.audioHeadFrames + save.audioTailFrames).filter { $0.presentationTimeUs >= startUs }
+            let audioTrack = Self.selectAudioTrack(
+                from: (save.audioHeadFrames + save.audioTailFrames).filter { $0.presentationTimeUs >= startUs }
+            )
 
             do {
                 try? FileManager.default.removeItem(at: save.outputURL)
@@ -1182,6 +1183,7 @@ final class CameraEncoderController: NSObject {
                 // instead of rotated 90°, matching the portrait-locked UI.
                 videoInput.transform = CGAffineTransform(rotationAngle: .pi / 2)
                 guard writer.canAdd(videoInput) else {
+                    Self.abortSave(writer: nil, pumps: [], outputURL: save.outputURL)
                     onFailed(CircularBufferErrorCode.saveFailed, "Não foi possível configurar o gravador de vídeo.")
                     return
                 }
@@ -1198,8 +1200,8 @@ final class CameraEncoderController: NSObject {
                 // encoding partway through a batch append of pre-recorded
                 // samples in an earlier version of this code.
                 var audioInput: AVAssetWriterInput?
-                if let audioFormatDescription, !audioFrames.isEmpty {
-                    let candidateAudioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: audioFormatDescription)
+                if let audioTrack {
+                    let candidateAudioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: audioTrack.format)
                     candidateAudioInput.expectsMediaDataInRealTime = false
                     if writer.canAdd(candidateAudioInput) {
                         writer.add(candidateAudioInput)
@@ -1207,7 +1209,13 @@ final class CameraEncoderController: NSObject {
                     }
                 }
 
-                writer.startWriting()
+                // startSession raises an uncatchable exception on a writer
+                // that failed to start (e.g. the disk is full).
+                guard writer.startWriting() else {
+                    Self.abortSave(writer: writer, pumps: [], outputURL: save.outputURL)
+                    onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "Não foi possível iniciar o gravador de vídeo.")
+                    return
+                }
                 writer.startSession(atSourceTime: .zero)
 
                 // Two AVAssetWriterInputs must each be pumped from their
@@ -1225,81 +1233,36 @@ final class CameraEncoderController: NSObject {
                 // requestMediaDataWhenReady is documented to require for
                 // multi-track writes.
                 let group = DispatchGroup()
-                var videoFailed = false
-                var audioFailed = false
+                var pumps: [MuxTrackPump] = []
 
-                group.enter()
-                var videoIndex = 0
-                videoInput.requestMediaDataWhenReady(on: DispatchQueue(label: "com.peguei.mux.video")) {
-                    while videoInput.isReadyForMoreMediaData {
-                        guard writer.status == .writing else {
-                            videoFailed = true
-                            videoInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                        guard videoIndex < videoFrames.count else {
-                            videoInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                        let frame = videoFrames[videoIndex]
-                        videoIndex += 1
-                        guard let sampleBuffer = Self.makeSampleBuffer(frame: frame, formatDescription: formatDescription, startUs: startUs, fps: save.fps) else {
-                            continue
-                        }
-                        if !videoInput.append(sampleBuffer) {
-                            videoFailed = true
-                            videoInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    }
+                let videoPump = MuxTrackPump(writer: writer, input: videoInput, group: group, label: "com.peguei.mux.video")
+                pumps.append(videoPump)
+                videoPump.start(sampleCount: videoFrames.count) { index in
+                    Self.makeSampleBuffer(frame: videoFrames[index], formatDescription: formatDescription, startUs: startUs, fps: save.fps)
                 }
 
-                if let audioInput, let audioFormatDescription {
-                    group.enter()
-                    var audioIndex = 0
-                    audioInput.requestMediaDataWhenReady(on: DispatchQueue(label: "com.peguei.mux.audio")) {
-                        while audioInput.isReadyForMoreMediaData {
-                            guard writer.status == .writing else {
-                                audioFailed = true
-                                audioInput.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                            guard audioIndex < audioFrames.count else {
-                                audioInput.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                            let frame = audioFrames[audioIndex]
-                            audioIndex += 1
-                            guard let sampleBuffer = Self.makeAudioSampleBuffer(frame: frame, formatDescription: audioFormatDescription, startUs: startUs) else {
-                                continue
-                            }
-                            if !audioInput.append(sampleBuffer) {
-                                audioFailed = true
-                                audioInput.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        }
+                if let audioInput, let audioTrack {
+                    let audioPump = MuxTrackPump(writer: writer, input: audioInput, group: group, label: "com.peguei.mux.audio")
+                    pumps.append(audioPump)
+                    audioPump.start(sampleCount: audioTrack.frames.count) { index in
+                        Self.makeAudioSampleBuffer(frame: audioTrack.frames[index], formatDescription: audioTrack.format, startUs: startUs)
                     }
                 }
 
                 // Bounding this wait (rather than group.wait() with no
                 // timeout) means a track that somehow never finishes still
                 // surfaces as onFailed() instead of hanging the save --
-                // and by extension the JS promise -- forever.
-                let groupFinished = group.wait(timeout: .now() + 30) == .success
+                // and by extension the JS promise -- forever. See
+                // SaveTimeouts for how the bound scales with the clip.
+                let muxTimeout = SaveTimeouts.mux(clipDurationSeconds: durationSeconds, totalBytes: save.recordedBytes)
+                let groupFinished = group.wait(timeout: .now() + muxTimeout) == .success
 
-                guard groupFinished, !videoFailed, !audioFailed, writer.status == .writing else {
-                    onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "O gravador de vídeo parou de responder.")
+                guard groupFinished, !pumps.contains(where: \.didFail), writer.status == .writing else {
+                    let message = writer.error?.localizedDescription ?? "O gravador de vídeo parou de responder."
+                    Self.abortSave(writer: writer, pumps: pumps, outputURL: save.outputURL)
+                    onFailed(CircularBufferErrorCode.saveFailed, message)
                     return
                 }
-
-                let durationSeconds = Double(videoFrames.last!.presentationTimeUs - startUs) / 1_000_000.0
 
                 // finishWriting's completion handler is not guaranteed to
                 // fire if the writer stalls internally -- bounding the
@@ -1310,23 +1273,25 @@ final class CameraEncoderController: NSObject {
                 writer.finishWriting {
                     semaphore.signal()
                 }
-                let finished = semaphore.wait(timeout: .now() + 10) == .success
+                let finished = semaphore.wait(timeout: .now() + SaveTimeouts.finish(totalBytes: save.recordedBytes)) == .success
 
                 if finished, writer.status == .completed {
                     // `.completed` alone isn't proof of a playable clip --
                     // see SaveVerification. Only a verified file resolves
                     // the promise (and so triggers the "saved" chime in JS).
                     if let failure = Self.verifySavedClip(at: save.outputURL) {
-                        PegueiDiag.log("finalizeSave verification FAILED: \(failure)")
                         try? FileManager.default.removeItem(at: save.outputURL)
                         onFailed(CircularBufferErrorCode.saveFailed, failure)
                     } else {
                         onSaved(save.outputURL.path, durationSeconds)
                     }
                 } else {
-                    onFailed(CircularBufferErrorCode.saveFailed, writer.error?.localizedDescription ?? "Falha desconhecida ao finalizar o vídeo.")
+                    let message = writer.error?.localizedDescription ?? "Falha desconhecida ao finalizar o vídeo."
+                    Self.abortSave(writer: writer, pumps: [], outputURL: save.outputURL)
+                    onFailed(CircularBufferErrorCode.saveFailed, message)
                 }
             } catch {
+                Self.abortSave(writer: nil, pumps: [], outputURL: save.outputURL)
                 onFailed(CircularBufferErrorCode.saveFailed, "Falha ao gerar o arquivo de vídeo: \(error.localizedDescription)")
             }
         }
@@ -1335,8 +1300,10 @@ final class CameraEncoderController: NSObject {
     /// Gathers the facts `SaveVerification` judges (file exists, non-zero
     /// size, at least one video track) for a just-written clip. Runs on
     /// finalizeSave's background queue, so blocking on the async track load
-    /// is fine; bounded like the other waits in finalizeSave so a stuck load
-    /// surfaces as a failure instead of a promise that never settles.
+    /// is fine; bounded like the other waits in finalizeSave so the promise
+    /// always settles. A load that merely timed out proves nothing (a busy
+    /// device, not a bad file), so it's reported as "unverified" rather than
+    /// as zero tracks: deleting a good clip is the worse mistake.
     /// `loadTracks(withMediaType:completionHandler:)` rather than the
     /// synchronous `tracks(withMediaType:)`, which is deprecated since iOS 16
     /// (this project's deployment target).
@@ -1345,7 +1312,7 @@ final class CameraEncoderController: NSObject {
         let exists = fileManager.fileExists(atPath: url.path)
         let size = (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
 
-        var videoTrackCount = 0
+        var videoTrackCount: Int? = 0
         if exists, size > 0 {
             let semaphore = DispatchSemaphore(value: 0)
             let result = TrackCountBox()
@@ -1353,8 +1320,7 @@ final class CameraEncoderController: NSObject {
                 result.set(tracks?.count ?? 0)
                 semaphore.signal()
             }
-            _ = semaphore.wait(timeout: .now() + 5)
-            videoTrackCount = result.get()
+            videoTrackCount = semaphore.wait(timeout: .now() + 5) == .success ? result.get() : nil
         }
         return SaveVerification.failureReason(fileExists: exists, fileSizeBytes: size, videoTrackCount: videoTrackCount)
     }
@@ -1487,12 +1453,23 @@ final class CameraEncoderController: NSObject {
         }
     }
 
+    /// Hands the audio route back so whatever the user was listening to
+    /// resumes. Best-effort: it fails harmlessly if a beep is still playing.
+    private func releaseAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
     /// Body of `stopInternal`, callable synchronously from code that's
-    /// already on `sessionQueue` (the recovery paths).
-    private func teardownOnSessionQueue(clearPendingConfig: Bool) {
-        PegueiDiag.log("stopInternal clearPendingConfig=\(clearPendingConfig)")
+    /// already on `sessionQueue` (the recovery paths). `reopening` is true
+    /// only when the caller brings the pipeline straight back up, in which
+    /// case the audio session stays active.
+    private func teardownOnSessionQueue(clearPendingConfig: Bool, reopening: Bool = false) {
+        stopWatchdogTimer()
         if session.isRunning {
             session.stopRunning()
+        }
+        if !reopening {
+            releaseAudioSession()
         }
         deviceLock.lock()
         activeDevice = nil
@@ -1515,7 +1492,9 @@ final class CameraEncoderController: NSObject {
         if clearPendingConfig {
             pendingConfig = nil
         }
-        pendingSave = nil
+        // Still recording here means JS didn't ask for this stop; the recovery
+        // paths have already taken theirs. Taken before the format reset below.
+        let stoppedRecording = takePendingSaveForEarlyFinalizationLocked()
         encoderGeneration &+= 1
         let oldCompressionSession = compressionSession
         compressionSession = nil
@@ -1534,6 +1513,9 @@ final class CameraEncoderController: NSObject {
         }
         oldRingBuffer?.clear()
         oldAudioRingBuffer?.clear()
+        if let stoppedRecording {
+            finalizeEarly(stoppedRecording, reason: .stopped)
+        }
 
         // Any pending startRunning() retry chain belongs to the pipeline
         // that just went away.
@@ -1554,9 +1536,6 @@ extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate,
             handleAudioSampleBuffer(sampleBuffer)
             return
         }
-        diagLock.lock()
-        diagCapturedFrames += 1
-        diagLock.unlock()
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         // Read the session and its generation together (the pair is swapped
         // atomically by rebuildEncoder/teardown), then encode outside the
@@ -1579,7 +1558,6 @@ extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate,
             infoFlagsOut: nil
         )
         if encodeStatus != noErr {
-            recordEncodeError(encodeStatus, stage: "encodeFrame")
             noteEncoderError(encodeStatus, generation: generation)
         }
     }
@@ -1601,10 +1579,9 @@ extension CameraEncoderController: AVCaptureVideoDataOutputSampleBufferDelegate,
 // a JS-driven start/stop; the decisions themselves live in the pure types in
 // PipelineHealthPolicy.swift (unit-tested in PegueiTests).
 extension CameraEncoderController {
-    private struct EarlyFinalization {
+    fileprivate struct EarlyFinalization {
         let save: PendingSave
         let videoFormat: CMFormatDescription?
-        let audioFormat: CMFormatDescription?
     }
 
     fileprivate func installReliabilityMonitoring() {
@@ -1639,16 +1616,25 @@ extension CameraEncoderController {
             self?.appActivityChanged(isActive: UIApplication.shared.applicationState == .active)
         }
 
-        // 1 Hz on sessionQueue itself: ticks are serialized with every
-        // start/stop/recovery action, and a tick can't fire mid-restart. The
-        // leeway lets the OS coalesce the wakeup with others; the tick is a
-        // handful of reads when nothing's wrong (and a no-op when the
-        // pipeline isn't running at all).
+    }
+
+    /// 1 Hz on sessionQueue itself: ticks are serialized with every
+    /// start/stop/recovery action, and a tick can't fire mid-restart. The
+    /// leeway lets the OS coalesce the wakeup with others. Exists only while
+    /// the pipeline runs, so an idle app has no 1 Hz wakeup. Call on sessionQueue.
+    fileprivate func startWatchdogTimer() {
+        watchdogTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: sessionQueue)
         timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
         timer.setEventHandler { [weak self] in self?.watchdogTick() }
         timer.resume()
         watchdogTimer = timer
+    }
+
+    /// Call on sessionQueue.
+    fileprivate func stopWatchdogTimer() {
+        watchdogTimer?.cancel()
+        watchdogTimer = nil
     }
 
     private static func interruptionReasonName(_ rawReason: Int?) -> String {
@@ -1679,12 +1665,8 @@ extension CameraEncoderController {
     /// Called on main.
     private func appActivityChanged(isActive: Bool) {
         stateLock.lock()
-        let changed = isAppActive != isActive
         isAppActive = isActive
         stateLock.unlock()
-        if changed {
-            PegueiDiag.log("app active=\(isActive)")
-        }
         guard isActive else { return }
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -1718,6 +1700,13 @@ extension CameraEncoderController {
         let code = error?.code ?? 0
         if code == AVError.mediaServicesWereReset.rawValue {
             restartPipeline(reason: "mediaServicesWereReset")
+            return
+        }
+        // A session that keeps erroring can come back healthy enough between
+        // errors for frames to flow, so the watchdog's ladder never escalates:
+        // the budget is what bounds this loop.
+        guard recoveryBudget.consume(now: Self.uptime) else {
+            giveUp(reason: "runtimeErrors")
             return
         }
         beginRecovery(reason: "runtimeError:\(code)")
@@ -1765,7 +1754,6 @@ extension CameraEncoderController {
         }
 
         session.startRunning()
-        PegueiDiag.log("session startRunning retry attempt=\(attempt) -> isRunning=\(session.isRunning)")
         if session.isRunning {
             isSessionRetryInFlight = false
             // The watchdog verifies frames actually flow from here on.
@@ -1779,7 +1767,6 @@ extension CameraEncoderController {
     }
 
     private func handleInterruption(reasonName: String) {
-        PegueiDiag.log("handling interruption reason=\(reasonName)")
         isSessionInterrupted = true
         healthTracker.isInterrupted = true
         stateLock.lock()
@@ -1804,7 +1791,6 @@ extension CameraEncoderController {
         stateLock.lock()
         let running = isRunning
         stateLock.unlock()
-        PegueiDiag.log("handling interruption end running=\(running) session.isRunning=\(session.isRunning)")
         guard running else { return }
         watchdog.restartWindow(now: Self.uptime)
         beginRecovery(reason: "interruptionEnded")
@@ -1830,7 +1816,6 @@ extension CameraEncoderController {
                 publishHealth(reason: "framesFlowing")
             }
             if let since = recoveringSince, lastFrame > since {
-                PegueiDiag.log("recovery confirmed: frames flowing \(String(format: "%.1f", now - since))s after recovery began")
                 recoveringSince = nil
                 healthTracker.isRecovering = false
                 publishHealth(reason: "framesFlowing")
@@ -1842,10 +1827,8 @@ extension CameraEncoderController {
         // a full restart itself if it fails).
         let isEligible = appActive && !isSessionInterrupted && !isSessionRetryInFlight
         switch watchdog.evaluate(now: now, lastFrameTime: lastFrame, isEligible: isEligible) {
-        case .none:
+        case .none, .recovered:
             break
-        case .recovered:
-            PegueiDiag.log("watchdog: frame flow restored")
         case .rebuildEncoder:
             rebuildEncoder(reason: "watchdog:noFrames", expectedGeneration: nil)
         case .restartPipeline:
@@ -1872,53 +1855,36 @@ extension CameraEncoderController {
             return
         }
         guard let state = healthTracker.takeTransition() else { return }
-        PegueiDiag.log("health -> \(state.rawValue) reason=\(reason ?? "nil")")
         delegate?.cameraEncoderController(self, didChangeHealth: state, reason: reason)
     }
 
     /// Must be called holding stateLock. Ends the in-flight manual recording
     /// (if any) at exactly this point -- in the same critical section that
     /// swaps the encoder/ring buffers, so it holds frames from one encoder
-    /// generation only -- and parks a `DetachedSave` slot for its result.
-    private func takePendingSaveForEarlyFinalizationLocked() -> EarlyFinalization? {
+    /// generation only.
+    fileprivate func takePendingSaveForEarlyFinalizationLocked() -> EarlyFinalization? {
         guard let save = pendingSave else { return nil }
         pendingSave = nil
-        detachedSave = DetachedSave(outputURL: save.outputURL, outcome: nil, waiter: nil)
-        return EarlyFinalization(save: save, videoFormat: formatDescription, audioFormat: audioFormatDescription)
+        return EarlyFinalization(save: save, videoFormat: formatDescription)
     }
 
-    private func finalizeEarly(_ early: EarlyFinalization, reason: String) {
-        PegueiDiag.log("finalizing in-flight recording early (\(reason)) head=\(early.save.headFrames.count) tail=\(early.save.tailFrames.count)")
-        let outputURL = early.save.outputURL
+    /// Saves what the recording has and reports the result as the
+    /// RecordingFinalized event. That event is the only delivery path, so no
+    /// result can get stuck waiting for a stopManualRecording that may never
+    /// come, and a later stop just rejects with "no recording in progress".
+    fileprivate func finalizeEarly(_ early: EarlyFinalization, reason: RecordingFinalizeReason) {
         finalizeSave(
             early.save,
             videoFormat: early.videoFormat,
-            audioFormat: early.audioFormat,
             onSaved: { [weak self] path, duration in
-                self?.completeDetachedSave(outputURL: outputURL, outcome: .saved(path: path, durationSeconds: duration))
+                guard let self else { return }
+                self.delegate?.cameraEncoderController(self, didFinalizeRecordingWithReason: reason, path: path, durationSeconds: duration, error: nil)
             },
-            onFailed: { [weak self] code, message in
-                self?.completeDetachedSave(outputURL: outputURL, outcome: .failed(code: code, message: message))
+            onFailed: { [weak self] _, message in
+                guard let self else { return }
+                self.delegate?.cameraEncoderController(self, didFinalizeRecordingWithReason: reason, path: nil, durationSeconds: nil, error: message)
             }
         )
-    }
-
-    private func completeDetachedSave(outputURL: URL, outcome: SaveOutcome) {
-        stateLock.lock()
-        guard var detached = detachedSave, detached.outputURL == outputURL else {
-            stateLock.unlock()
-            PegueiDiag.log("detached save \(outputURL.lastPathComponent) finished but was no longer awaited")
-            return
-        }
-        if let waiter = detached.waiter {
-            detachedSave = nil
-            stateLock.unlock()
-            Self.deliver(outcome, onSaved: waiter.onSaved, onFailed: waiter.onFailed)
-        } else {
-            detached.outcome = outcome
-            detachedSave = detached
-            stateLock.unlock()
-        }
     }
 
     /// First rung: replace only the VTCompressionSession. The capture
@@ -1936,6 +1902,29 @@ extension CameraEncoderController {
             stateLock.unlock()
             return
         }
+        // One rebuild per foreground after a -12903 is normal and doesn't
+        // count; a rebuild that produced no frame before needing another one
+        // does, or a permanently failing encoder would rebuild forever. Those
+        // repeats are also paced: encode errors arrive per frame, and spending
+        // the whole budget within a fraction of a second would give up on an
+        // encoder that only needed the app to finish coming back to the
+        // foreground.
+        let now = Self.uptime
+        if let lastRebuild = lastEncoderRebuildUptime, (lastEncodedFrameUptime ?? -.infinity) <= lastRebuild {
+            if expectedGeneration != nil, now - lastRebuild < Self.repeatRebuildInterval {
+                stateLock.unlock()
+                sessionQueue.asyncAfter(deadline: .now() + Self.repeatRebuildInterval) { [weak self] in
+                    self?.rebuildEncoder(reason: reason, expectedGeneration: expectedGeneration)
+                }
+                return
+            }
+            guard recoveryBudget.consume(now: now) else {
+                stateLock.unlock()
+                giveUp(reason: "encoderRebuildsFailed")
+                return
+            }
+        }
+        lastEncoderRebuildUptime = now
         encoderGeneration &+= 1
         let oldSession = compressionSession
         compressionSession = nil
@@ -1946,13 +1935,12 @@ extension CameraEncoderController {
         audioRingBuffer?.clear()
         stateLock.unlock()
 
-        PegueiDiag.log("rebuildEncoder reason=\(reason) recordingCut=\(early != nil)")
         if let oldSession {
             VTCompressionSessionInvalidate(oldSession)
         }
         beginRecovery(reason: reason)
         if let early {
-            finalizeEarly(early, reason: reason)
+            finalizeEarly(early, reason: .recovery)
         }
 
         guard let newSession = makeCompressionSession(config: config) else {
@@ -1977,15 +1965,22 @@ extension CameraEncoderController {
             stateLock.unlock()
             return
         }
+        stateLock.unlock()
+
+        guard recoveryBudget.consume(now: Self.uptime) else {
+            giveUp(reason: "recoveryBudgetExhausted")
+            return
+        }
+
+        stateLock.lock()
         let early = takePendingSaveForEarlyFinalizationLocked()
         stateLock.unlock()
 
-        PegueiDiag.log("restartPipeline reason=\(reason) recordingCut=\(early != nil)")
         beginRecovery(reason: reason)
         if let early {
-            finalizeEarly(early, reason: reason)
+            finalizeEarly(early, reason: .recovery)
         }
-        teardownOnSessionQueue(clearPendingConfig: false)
+        teardownOnSessionQueue(clearPendingConfig: false, reopening: true)
         isRecoveryRestart = true
         openCameraAndStartOnSessionQueue()
     }
@@ -2000,11 +1995,20 @@ extension CameraEncoderController {
         stateLock.lock()
         let early = takePendingSaveForEarlyFinalizationLocked()
         stateLock.unlock()
-        PegueiDiag.log("GIVING UP reason=\(reason) recordingCut=\(early != nil)")
         if let early {
-            finalizeEarly(early, reason: reason)
+            finalizeEarly(early, reason: .recovery)
         }
         teardownOnSessionQueue(clearPendingConfig: false)
+        // Nothing is recovering any more. The health event has no "failed"
+        // state; clearing the conditions unsticks the indicator from
+        // "Recuperando…", and the error event right after is what tells JS the
+        // pipeline is dead (isBuffering() is false from here too).
+        recoveringSince = nil
+        awaitingInitialHealth = false
+        healthTracker.isRecovering = false
+        healthTracker.isInterrupted = false
+        healthTracker.isThrottled = false
+        publishHealth(reason: reason)
         delegate?.cameraEncoderController(
             self,
             didFailWithCode: CircularBufferErrorCode.encoderInitFailed,
@@ -2057,10 +2061,7 @@ extension CameraEncoderController {
 
         if target != appliedFps {
             let supported = ranges.contains { Double(target) >= $0.minFrameRate && Double(target) <= $0.maxFrameRate }
-            guard supported else {
-                PegueiDiag.log("thermal step to \(target) fps skipped: not supported by active format")
-                return
-            }
+            guard supported else { return }
             do {
                 try device.lockForConfiguration()
                 let duration = CMTimeMake(value: 1, timescale: Int32(target))
@@ -2068,10 +2069,8 @@ extension CameraEncoderController {
                 device.activeVideoMaxFrameDuration = duration
                 device.unlockForConfiguration()
             } catch {
-                PegueiDiag.log("thermal step to \(target) fps failed: \(error.localizedDescription)")
                 return
             }
-            PegueiDiag.log("thermal step \(appliedFps) -> \(target) fps (level=\(thermalLevel), configured=\(configuredFps))")
             appliedFps = target
             stateLock.lock()
             activeFps = target
@@ -2114,7 +2113,6 @@ extension CameraEncoderController {
         DispatchQueue.main.async {
             guard let connection = layer.connection, connection.isEnabled == suppressed else { return }
             connection.isEnabled = !suppressed
-            PegueiDiag.log("preview connection enabled=\(!suppressed)")
         }
     }
 }

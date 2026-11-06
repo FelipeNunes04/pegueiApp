@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import { CameraScreen } from '../CameraScreen';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../settings/store/settingsStore';
@@ -83,6 +83,65 @@ describe('CameraScreen', () => {
 
     expect(queryByTestId('error-banner')).toBeTruthy();
     expect(getByText('Câmera ocupada por outro app.')).toBeTruthy();
+  });
+
+  describe('notice banner', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      mockedUseCircularBuffer.mockReturnValue(baseCircularBuffer());
+      useRecordingStore.setState({ noticeMessage: 'Gravação encerrada: limite de memória atingido. O vídeo foi salvo.' });
+    });
+
+    afterEach(async () => {
+      await act(async () => {
+        useRecordingStore.setState({ noticeMessage: null });
+      });
+      jest.useRealTimers();
+    });
+
+    it('shows the message and clears it on its own', async () => {
+      const { getByText, queryByTestId } = await render(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+      expect(getByText(/limite de memória atingido/)).toBeTruthy();
+
+      await act(async () => {
+        jest.advanceTimersByTime(6000);
+      });
+
+      expect(queryByTestId('notice-banner')).toBeNull();
+      expect(useRecordingStore.getState().noticeMessage).toBeNull();
+    });
+
+    it('can be dismissed', async () => {
+      const { getByTestId, queryByTestId } = await render(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+
+      await act(async () => {
+        fireEvent.press(within(getByTestId('notice-banner')).getByText('Fechar'));
+      });
+
+      expect(queryByTestId('notice-banner')).toBeNull();
+    });
+
+    it('gives way to an error banner', async () => {
+      useRecordingStore.setState({ errorMessage: 'Falhou.' });
+
+      const { getByTestId, queryByTestId } = await render(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+
+      expect(getByTestId('error-banner')).toBeTruthy();
+      expect(queryByTestId('notice-banner')).toBeNull();
+    });
+
+    it('waits out pocket mode so the message can still be read afterwards', async () => {
+      const { getByTestId } = await render(<CameraScreen navigation={fakeNavigation} route={{} as never} />);
+
+      await act(async () => {
+        fireEvent.press(getByTestId('enter-pocket-mode'));
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+
+      expect(useRecordingStore.getState().noticeMessage).not.toBeNull();
+    });
   });
 
   it('renders the "saving" state while a clip is being written', async () => {

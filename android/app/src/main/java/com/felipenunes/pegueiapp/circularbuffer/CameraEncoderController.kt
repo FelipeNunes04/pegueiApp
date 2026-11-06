@@ -29,6 +29,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 data class BufferConfig(val bufferSeconds: Int, val width: Int, val height: Int, val fps: Int)
 
@@ -58,6 +59,11 @@ interface CameraEncoderCallback {
     /** `CircularBufferHealth` transitions (`state` is one of BufferHealth's wire values).
      *  Default no-op so callers that only care about errors don't have to implement it. */
     fun onHealth(state: String, reason: String?) {}
+
+    /** `CircularBufferRecordingFinalized`: native ended an in-flight manual recording on its
+     *  own (never via stopManualRecording()). `path`+`durationSeconds` on success, `error` on
+     *  failure. Runs on the mux thread. */
+    fun onRecordingFinalized(reason: String, path: String?, durationSeconds: Double?, error: String?) {}
 }
 
 interface SaveClipCallback {
@@ -165,7 +171,7 @@ object CameraEncoderController {
     private var isPocketMode = false
 
     /** Whether MainActivity.dispatchKeyEvent should turn volume/camera/media/enter keys into
-     *  `CircularBufferHardwareTrigger` events -- see [decideHardwareKey]. */
+     *  `CircularBufferHardwareTrigger` events -- see [HardwareKeyTracker]. */
     @Volatile
     var hardwareTriggerEnabled = false
 
@@ -219,10 +225,9 @@ object CameraEncoderController {
     @Volatile
     private var pendingSave: PendingSave? = null
 
-    /** A manual recording the native side had to finalize on its own (encoder rebuild /
-     *  pipeline restart mid-recording), waiting for JS's stopManualRecording() to claim its
-     *  outcome -- see [finalizeInFlightRecording]. */
-    private var orphanedSave: DeferredSaveOutcome? = null
+    /** A terminal failure already released the foreground service (see
+     *  [releaseForegroundAfterFailure]); the next session that really starts takes it back. */
+    private var foregroundReleased = false
 
     // --- Reliability state (watchdog, camera-loss backoff, health) ---
 
@@ -261,6 +266,9 @@ object CameraEncoderController {
      * "stop" tap is what ends it (see [stopManualRecording]). The tail lists
      * are appended from the drain/audio threads and copied by [finalizeSave],
      * so both sides synchronize on the list itself.
+     *
+     * All of it lives on the Java heap until the mux, so [heldBytes] is checked
+     * against [byteCap] on every appended frame -- see [manualRecordingByteCap].
      */
     private class PendingSave(
         val headFrames: List<EncodedFrame>,
@@ -268,7 +276,11 @@ object CameraEncoderController {
         val audioHeadFrames: List<EncodedFrame>,
         val audioTailFrames: MutableList<EncodedFrame>,
         val outputFile: File,
-    )
+        val byteCap: Long,
+    ) {
+        val heldBytes = AtomicLong((headFrames.sumOf { it.data.size.toLong() }) + audioHeadFrames.sumOf { it.data.size.toLong() })
+        val limitReported = AtomicBoolean(false)
+    }
 
     private enum class SessionPurpose { INITIAL, ENCODER_RESTART, NEW_PREVIEW }
 
@@ -293,6 +305,8 @@ object CameraEncoderController {
         ringBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
         audioRingBuffer = FrameRingBuffer(windowUs = config.bufferSeconds * 1_000_000L)
 
+        // CircularBufferModule starts the foreground service alongside this call.
+        foregroundReleased = false
         // A JS-initiated (re)start supersedes any native recovery in progress.
         cancelScheduledReopen()
         reopenAttempt = 0
@@ -572,34 +586,18 @@ object CameraEncoderController {
             return
         }
         if (cameraId == null) {
-            callback?.onError(CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Nenhuma câmera traseira disponível.")
+            failOpen(recovery, CameraLossKind.OPEN_FAILED, CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Nenhuma câmera traseira disponível.")
             return
         }
 
-        val characteristics = manager.getCameraCharacteristics(cameraId)
-        // CONTROL_ZOOM_RATIO (API 30+) is what makes zoom span a logical
-        // multi-camera's physical lenses (including below 1.0 for
-        // ultra-wide) automatically -- the framework picks the right
-        // physical lens for the requested ratio. Below API 30, or on a
-        // device that doesn't report a range, only crop-region digital zoom
-        // is available (never below 1.0, so 0.5x is correctly never offered
-        // -- see getZoomInfo()).
-        zoomRatioRange = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
-        } else {
-            null
+        // Inside a try: during recovery this runs on the watchdog thread, where
+        // an uncaught CameraAccessException would take the whole process down.
+        try {
+            readCameraCharacteristics(manager, cameraId, config)
+        } catch (t: Throwable) {
+            failOpen(recovery, CameraLossKind.SERVICE_ERROR, CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Falha ao acessar a câmera: ${t.message}")
+            return
         }
-        maxDigitalZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
-        sensorActiveArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-        availableFpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-            ?.map { FpsRange(it.lower, it.upper) } ?: emptyList()
-        targetFpsRange = fpsRangeFor(config.fps, effectiveFps(config.fps, thermalStatus))
-
-        val supportedPreviewSizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?.getOutputSizes(SurfaceTexture::class.java)
-            ?.map { PixelSize(it.width, it.height) } ?: emptyList()
-        previewSize = pickPreviewSize(supportedPreviewSizes, PixelSize(config.width, config.height))
-        applyPreviewBufferSize()
 
         try {
             createVideoEncoder(config)
@@ -613,10 +611,18 @@ object CameraEncoderController {
         try {
             startAudioCapture()
         } catch (e: SecurityException) {
-            releaseEncoder()
             releaseAudioCapture()
-            callback?.onError(CircularBufferErrorCodes.MICROPHONE_PERMISSION, "Permissão de microfone não concedida.")
-            return
+            if (recovery) {
+                // Bailing out here used to leave recovery stalled: nothing
+                // running, no reopen scheduled, health stuck on recovering.
+                // The buffer the user is relying on matters more than its
+                // audio track, so carry on video-only like the catch below.
+                Log.e(TAG, "Microphone unavailable during recovery, continuing video-only", e)
+            } else {
+                releaseEncoder()
+                failOpen(false, CameraLossKind.OPEN_FAILED, CircularBufferErrorCodes.MICROPHONE_PERMISSION, "Permissão de microfone não concedida.")
+                return
+            }
         } catch (t: Throwable) {
             // Non-fatal: the video pipeline above already succeeded, so a mic/
             // audio-encoder problem degrades to a video-only clip (mirrors
@@ -669,10 +675,38 @@ object CameraEncoderController {
             )
         } catch (e: SecurityException) {
             stopInternal(keepZoom = recovery)
+            releaseForegroundAfterFailure()
             callback?.onError(CircularBufferErrorCodes.CAMERA_PERMISSION, "Permissão de câmera não concedida.")
         } catch (t: Throwable) {
             failOpen(recovery, CameraLossKind.OPEN_FAILED, CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Falha ao abrir a câmera: ${t.message}")
         }
+    }
+
+    private fun readCameraCharacteristics(manager: CameraManager, cameraId: String, config: BufferConfig) {
+        val characteristics = manager.getCameraCharacteristics(cameraId)
+        // CONTROL_ZOOM_RATIO (API 30+) is what makes zoom span a logical
+        // multi-camera's physical lenses (including below 1.0 for
+        // ultra-wide) automatically -- the framework picks the right
+        // physical lens for the requested ratio. Below API 30, or on a
+        // device that doesn't report a range, only crop-region digital zoom
+        // is available (never below 1.0, so 0.5x is correctly never offered
+        // -- see getZoomInfo()).
+        zoomRatioRange = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+        } else {
+            null
+        }
+        maxDigitalZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
+        sensorActiveArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        availableFpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            ?.map { FpsRange(it.lower, it.upper) } ?: emptyList()
+        targetFpsRange = fpsRangeFor(config.fps, effectiveFps(config.fps, thermalStatus))
+
+        val supportedPreviewSizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?.getOutputSizes(SurfaceTexture::class.java)
+            ?.map { PixelSize(it.width, it.height) } ?: emptyList()
+        previewSize = pickPreviewSize(supportedPreviewSizes, PixelSize(config.width, config.height))
+        applyPreviewBufferSize()
     }
 
     /** A synchronous open failure: during recovery, back off and retry (the camera
@@ -685,7 +719,39 @@ object CameraEncoderController {
             Log.e(TAG, "Recovery open failed ($kind): $message")
             scheduleReopen(kind)
         } else {
+            releaseForegroundAfterFailure()
             callback?.onError(code, message)
+        }
+    }
+
+    /**
+     * Final failure: nothing is capturing and nothing will retry until JS or
+     * the preview view restarts the buffer, so don't leave a "recording"
+     * notification and a CPU-holding wake lock behind. Only the service goes:
+     * [pendingConfig] stays, so the normal restart paths still work, and
+     * [onSessionConfigured] takes the service back if the next start comes
+     * from attachPreviewSurface() rather than startBuffering().
+     */
+    private fun releaseForegroundAfterFailure() {
+        val context = appContext ?: return
+        foregroundReleased = true
+        try {
+            CircularBufferForegroundService.stop(context)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to stop foreground service", t)
+        }
+    }
+
+    private fun reacquireForegroundIfReleased() {
+        if (!foregroundReleased) return
+        foregroundReleased = false
+        val context = appContext ?: return
+        if (!FeatureFlags.BACKGROUND_RECORDING_ENABLED || isBackgroundMode) return
+        try {
+            CircularBufferForegroundService.start(context)
+        } catch (t: Throwable) {
+            // Same non-fatal stance as CircularBufferModule.startBuffering.
+            Log.e(TAG, "Failed to restart foreground service", t)
         }
     }
 
@@ -818,6 +884,7 @@ object CameraEncoderController {
             reopenAttempt = 0
             healthInterrupted = false
             updateHealth("cameraReady")
+            reacquireForegroundIfReleased()
         }
         watchdog.noteSessionStarted(SystemClock.elapsedRealtime())
         // Covers both the normal start and an encoder rebuild whose own
@@ -850,6 +917,7 @@ object CameraEncoderController {
                     // Previously this released only the video encoder and left
                     // the camera device + AudioRecord/audio thread running.
                     stopInternal()
+                    releaseForegroundAfterFailure()
                     callback?.onError(CircularBufferErrorCodes.ENCODER_INIT_FAILED, "Falha ao configurar sessão de captura.")
                 }
             }
@@ -887,11 +955,12 @@ object CameraEncoderController {
         if (gen != deviceGen) return
         val wasEstablished = isRunning.get() || isRecoveryOpen
         Log.w(TAG, "Camera lost: $kind (error=$errorCode, wasEstablished=$wasEstablished)")
-        finalizeInFlightRecording()
+        finalizeInFlightRecording(RecordingFinalizeReason.RECOVERY)
         stopInternal(keepZoom = true)
 
         if (!wasEstablished && kind != CameraLossKind.DISCONNECTED) {
             appliedZoom = null
+            releaseForegroundAfterFailure()
             val message = "Câmera indisponível (código ${errorCode ?: -1}). Verifique se outro app não está usando a câmera."
             callback?.onError(errorCodeFor(kind), message)
             return
@@ -911,6 +980,10 @@ object CameraEncoderController {
             // isBuffering() == false restarts it from scratch.
             Log.e(TAG, "Giving up reopening the camera after $reopenAttempt attempts ($kind)")
             reopenAttempt = 0
+            healthRecovering = false
+            healthInterrupted = true
+            updateHealth("reopenGaveUp")
+            releaseForegroundAfterFailure()
             callback?.onError(errorCodeFor(kind), "A câmera foi interrompida e não pôde ser reaberta.")
             return
         }
@@ -988,12 +1061,13 @@ object CameraEncoderController {
 
     private fun giveUp(reason: String) {
         Log.e(TAG, "Buffer could not be recovered ($reason), stopping")
-        finalizeInFlightRecording()
+        finalizeInFlightRecording(RecordingFinalizeReason.RECOVERY)
         stopInternal()
         watchdog.reset()
         healthRecovering = false
         healthInterrupted = true
         updateHealth("${reason}GaveUp")
+        releaseForegroundAfterFailure()
         callback?.onError(CircularBufferErrorCodes.ENCODER_INIT_FAILED, "O buffer de vídeo parou e não pôde ser recuperado.")
     }
 
@@ -1023,8 +1097,8 @@ object CameraEncoderController {
      * format -- so the video ring buffer is cleared here (some pre-roll is
      * lost, unavoidably) and an in-flight manual recording is finalized
      * right now with the frames it already has, under the old format,
-     * rather than mixing both encoders' output in one file. JS's eventual
-     * stopManualRecording() then receives that clip (see [orphanedSave]).
+     * rather than mixing both encoders' output in one file. JS learns about
+     * that clip from `CircularBufferRecordingFinalized` (reason `recovery`).
      */
     @Synchronized
     private fun restartEncoder(reason: String) {
@@ -1060,7 +1134,7 @@ object CameraEncoderController {
         drainThread = null
         drainCodec = null
 
-        finalizeInFlightRecording()
+        finalizeInFlightRecording(RecordingFinalizeReason.RECOVERY)
         ringBuffer?.clear()
         encoderOutputFormat = null
         try {
@@ -1095,7 +1169,7 @@ object CameraEncoderController {
         Log.w(TAG, "Restarting capture pipeline ($reason)")
         healthRecovering = true
         updateHealth(reason)
-        finalizeInFlightRecording()
+        finalizeInFlightRecording(RecordingFinalizeReason.RECOVERY)
         stopInternal(keepZoom = true)
         openCameraAndStart(recovery = true)
     }
@@ -1294,6 +1368,30 @@ object CameraEncoderController {
         // stopManualRecording() is called explicitly.
         val save = pendingSave ?: return
         synchronized(save.tailFrames) { save.tailFrames.add(frame) }
+        noteRecordingBytes(save, frame)
+    }
+
+    /** Drain/audio threads never take the controller lock, so going over the cap only posts
+     *  the finalization -- at most once per recording. */
+    private fun noteRecordingBytes(save: PendingSave, frame: EncodedFrame) {
+        if (save.heldBytes.addAndGet(frame.data.size.toLong()) < save.byteCap) return
+        if (!save.limitReported.compareAndSet(false, true)) return
+        watchdogHandler.post { onRecordingMemoryLimit(save) }
+    }
+
+    /**
+     * Ends the take before it can OOM the process (which would lose all of it).
+     * Buffering keeps running; the ring buffers are cleared for the same reason
+     * stopManualRecording() clears them (saved footage must not resurface as
+     * the next clip's pre-roll).
+     */
+    @Synchronized
+    private fun onRecordingMemoryLimit(save: PendingSave) {
+        if (pendingSave !== save) return
+        Log.w(TAG, "Manual recording reached ${save.byteCap} bytes held in memory, finalizing")
+        finalizeInFlightRecording(RecordingFinalizeReason.MEMORY_LIMIT)
+        ringBuffer?.clear()
+        audioRingBuffer?.clear()
     }
 
     /**
@@ -1505,6 +1603,7 @@ object CameraEncoderController {
     private fun onAudioFrameEncoded(frame: EncodedFrame) {
         val save = pendingSave ?: return
         synchronized(save.audioTailFrames) { save.audioTailFrames.add(frame) }
+        noteRecordingBytes(save, frame)
     }
 
     /**
@@ -1525,15 +1624,6 @@ object CameraEncoderController {
             callback.onFailed(CircularBufferErrorCodes.SAVE_FAILED, "Já existe uma gravação em andamento.")
             return
         }
-        if (orphanedSave != null) {
-            // JS is starting a new recording without ever having claimed the
-            // one the native side finalized early (e.g. a JS reload in
-            // between). That clip is already on disk in PegueiClips, so
-            // nothing is lost by dropping the claim -- holding it would
-            // otherwise block recording forever.
-            Log.w(TAG, "Dropping unclaimed early-finalized recording")
-            orphanedSave = null
-        }
 
         if (!moviesDir.exists()) moviesDir.mkdirs()
         val freeBytes = moviesDir.usableSpace
@@ -1545,7 +1635,14 @@ object CameraEncoderController {
         val head = buffer.snapshotFromOldestKeyframe()
         val audioHead = audioRingBuffer?.snapshot() ?: emptyList()
         val outputFile = File(moviesDir, "clip_${System.currentTimeMillis()}.mp4")
-        pendingSave = PendingSave(head, mutableListOf(), audioHead, mutableListOf(), outputFile)
+        pendingSave = PendingSave(
+            head,
+            mutableListOf(),
+            audioHead,
+            mutableListOf(),
+            outputFile,
+            manualRecordingByteCap(Runtime.getRuntime().maxMemory()),
+        )
         callback.onStarted()
     }
 
@@ -1553,14 +1650,8 @@ object CameraEncoderController {
     fun stopManualRecording(callback: SaveClipCallback) {
         val save = pendingSave
         if (save == null) {
-            // The recording was cut short by an encoder rebuild / pipeline
-            // restart and already finalized natively -- hand JS that clip.
-            val orphan = orphanedSave
-            if (orphan != null) {
-                orphanedSave = null
-                orphan.await { deliverSaveOutcome(it, callback) }
-                return
-            }
+            // Includes a recording native already ended on its own: JS got that
+            // clip through CircularBufferRecordingFinalized and tolerates this.
             callback.onFailed(CircularBufferErrorCodes.SAVE_FAILED, "Nenhuma gravação em andamento.")
             return
         }
@@ -1584,23 +1675,33 @@ object CameraEncoderController {
     }
 
     /**
-     * An in-flight manual recording whose encoder (or whole pipeline) is
-     * about to be torn down by recovery: finalize it now with exactly the
+     * Native is ending an in-flight manual recording on its own (recovery,
+     * explicit stop/teardown, memory cap): finalize it now with exactly the
      * frames it has, under the format of the encoder that produced them
      * (finalizeSave snapshots the formats synchronously, before the caller
-     * swaps them), and park the outcome for JS's stopManualRecording(). The
-     * frames recorded after the rebuild aren't part of this clip -- splicing
+     * swaps them), and report it via `CircularBufferRecordingFinalized`. A
+     * later stopManualRecording() rejects with "no recording in progress".
+     * Frames captured after this point aren't part of this clip -- splicing
      * two encoders' bitstreams into one track is exactly the format mixing
-     * the plan rules out -- so the user gets the clip up to the failure,
-     * not a corrupt one.
+     * the plan rules out -- so the user gets the clip up to here, not a
+     * corrupt one.
      */
-    private fun finalizeInFlightRecording() {
+    private fun finalizeInFlightRecording(reason: RecordingFinalizeReason) {
         val save = pendingSave ?: return
         pendingSave = null
-        Log.w(TAG, "Finalizing in-flight recording early (pipeline recovery)")
-        val deferred = DeferredSaveOutcome()
-        orphanedSave = deferred
-        finalizeSave(save) { deferred.complete(it) }
+        Log.w(TAG, "Finalizing in-flight recording early (${reason.wire})")
+        val cb = callback
+        finalizeSave(save) { outcome ->
+            try {
+                when (outcome) {
+                    is SaveOutcome.Saved -> cb?.onRecordingFinalized(reason.wire, outcome.path, outcome.durationSeconds, null)
+                    is SaveOutcome.Failed -> cb?.onRecordingFinalized(reason.wire, null, null, outcome.message)
+                }
+            } catch (t: Throwable) {
+                // On the mux thread, where an uncaught throw would kill the process.
+                Log.e(TAG, "Failed to emit recording-finalized event", t)
+            }
+        }
     }
 
     private fun finalizeSave(save: PendingSave, onOutcome: (SaveOutcome) -> Unit) {
@@ -1609,8 +1710,8 @@ object CameraEncoderController {
         // encoder (and nulled/replaced encoderOutputFormat).
         val videoFormat = encoderOutputFormat
         val audioFormat = audioEncoderOutputFormat
-        val allVideoFrames = save.headFrames + synchronized(save.tailFrames) { save.tailFrames.toList() }
-        val allAudioFrames = save.audioHeadFrames + synchronized(save.audioTailFrames) { save.audioTailFrames.toList() }
+        val allVideoFrames = joinHeadAndTail(save.headFrames, synchronized(save.tailFrames) { save.tailFrames.toList() })
+        val allAudioFrames = joinHeadAndTail(save.audioHeadFrames, synchronized(save.audioTailFrames) { save.audioTailFrames.toList() })
 
         Thread({
             var muxer: MediaMuxer? = null
@@ -1788,8 +1889,6 @@ object CameraEncoderController {
         stopWatchdogTicks()
         watchdog.reset()
         unregisterThermalListener()
-        // An explicit stop doesn't claim an early-finalized clip; it's on disk regardless.
-        orphanedSave = null
         isPocketMode = false
         stopInternal()
         healthInterrupted = false
@@ -1801,7 +1900,10 @@ object CameraEncoderController {
     /**
      * Tears the whole pipeline down (camera, session, encoders, threads,
      * buffers). Does NOT clear [pendingConfig] -- that's [stop]'s job -- so
-     * recovery can reopen with the same config afterwards.
+     * recovery can reopen with the same config afterwards. A manual recording
+     * still in flight here (notification "Parar", stopBuffering, preview detach
+     * in the foreground) is saved rather than dropped; recovery paths have
+     * already finalized theirs by now.
      *
      * @param keepZoom keep [appliedZoom] for a native-initiated reopen (JS
      *   doesn't know one happened, so nothing else would restore the zoom).
@@ -1813,7 +1915,6 @@ object CameraEncoderController {
         isOpening.set(false)
         isRecoveryOpen = false
         isAudioRunning.set(false)
-        pendingSave = null
         requestBuilder = null
         sessionPreviewSurface = null
         zoomRatioRange = null
@@ -1846,6 +1947,10 @@ object CameraEncoderController {
         audioThread = null
 
         releaseAudioCapture()
+
+        // After the joins, so the last drained frames make it in; before the
+        // formats below are cleared, since finalizeSave snapshots them.
+        finalizeInFlightRecording(RecordingFinalizeReason.STOPPED)
 
         cameraThread?.quitSafely()
         cameraThread = null

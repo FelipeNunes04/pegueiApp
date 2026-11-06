@@ -292,45 +292,50 @@ internal fun pickPreviewSize(supported: List<PixelSize>, encoder: PixelSize, max
  *  (a full disk or a revoked directory can still leave nothing/0 bytes). */
 internal fun isSavedClipValid(exists: Boolean, lengthBytes: Long): Boolean = exists && lengthBytes > 0
 
-/** Outcome of a save, decoupled from the bridge's SaveClipCallback so it can be
- *  produced before anyone is waiting for it -- see [DeferredSaveOutcome]. */
+/** Outcome of a save, decoupled from the bridge's SaveClipCallback. */
 internal sealed class SaveOutcome {
     data class Saved(val path: String, val durationSeconds: Double) : SaveOutcome()
     data class Failed(val code: String, val message: String) : SaveOutcome()
 }
 
-/**
- * One-shot rendezvous between a save that the *native side* finalized on
- * its own (an in-flight manual recording cut short by an encoder rebuild or
- * pipeline restart, see CameraEncoderController.finalizeInFlightRecording)
- * and JS's later stopManualRecording() call, which is still the only thing
- * that resolves the user's recording. Whichever side arrives second
- * delivers; each side only ever arrives once.
- */
-internal class DeferredSaveOutcome {
-    private var outcome: SaveOutcome? = null
-    private var waiter: ((SaveOutcome) -> Unit)? = null
-
-    fun complete(result: SaveOutcome) {
-        val deliverTo: ((SaveOutcome) -> Unit)?
-        synchronized(this) {
-            if (outcome != null) return
-            outcome = result
-            deliverTo = waiter
-            waiter = null
-        }
-        deliverTo?.invoke(result)
-    }
-
-    fun await(onOutcome: (SaveOutcome) -> Unit) {
-        val ready: SaveOutcome?
-        synchronized(this) {
-            ready = outcome
-            if (ready == null) waiter = onOutcome
-        }
-        ready?.let(onOutcome)
-    }
+/** Wire values of `CircularBufferRecordingFinalized`'s `reason`: why native ended an
+ *  in-flight manual recording without stopManualRecording() having been called. */
+internal enum class RecordingFinalizeReason(val wire: String) {
+    STOPPED("stopped"),
+    RECOVERY("recovery"),
+    MEMORY_LIMIT("memoryLimit"),
 }
+
+/**
+ * Joins a recording's pre-roll snapshot with its live tail. The drain thread
+ * adds a frame to the ring buffer and then to the recording without holding
+ * the lock startManualRecording() runs under, so a recording that starts
+ * between those two steps has that one frame in both -- which muxed as a
+ * duplicate sample at the junction. Matched by identity (it's the same
+ * object), never by timestamp, so nothing legitimate can ever be dropped.
+ */
+internal fun joinHeadAndTail(head: List<EncodedFrame>, tail: List<EncodedFrame>): List<EncodedFrame> {
+    val duplicated = head.isNotEmpty() && tail.isNotEmpty() && head.last() === tail.first()
+    return head + if (duplicated) tail.subList(1, tail.size) else tail
+}
+
+private const val MIB = 1024L * 1024L
+
+/**
+ * How many bytes of encoded frames a manual recording may hold before it's
+ * auto-finalized (reason `memoryLimit`): half the app's Java heap limit,
+ * clamped to 64-384 MiB. Takes live entirely in memory until muxed, so this
+ * keeps a long take from OOM-ing the process and losing all of it. Half
+ * because the rest must cover everything else on the heap plus allocation
+ * headroom/fragmentation for the frames in flight. The count covers pre-roll
+ * + tail, which is nearly all frame memory: the ring buffer's own frames are
+ * the same objects.
+ *
+ * Roughly, at 0.12 bits/pixel + 96 kbps audio, on a 256 MiB heap (128 MiB
+ * cap) / a 512+ MiB heap (256-384 MiB cap): 720p30 about 5 / 10+ min,
+ * 1080p30 about 2.3 / 4.5+ min, 4K30 about 35 / 70+ s, pre-roll included.
+ */
+internal fun manualRecordingByteCap(maxHeapBytes: Long): Long = (maxHeapBytes / 2).coerceIn(64 * MIB, 384 * MIB)
 
 // ---------------------------------------------------------------------------
 // Hardware triggers (MainActivity.dispatchKeyEvent)
@@ -362,23 +367,50 @@ internal enum class KeyDecision {
  * Only ever intercepts while the user has the setting on AND the buffer is
  * actually running -- everywhere else (Settings, Gallery, buffer stopped)
  * volume keys must keep changing volume and ENTER must keep working in text
- * fields. Fires on the key's *release* (ACTION_UP) rather than press so a
- * single physical press can't double-fire via auto-repeat, and ignores a
- * release whose press the system already canceled (e.g. a key that turned
- * into a system gesture/long-press action). ACTION_DOWN (including its
- * auto-repeats) is consumed so the volume HUD never shows up.
+ * fields.
+ *
+ * The decision is taken once per physical press, on its first ACTION_DOWN,
+ * and the matching release follows it. Deciding each edge independently let
+ * a press that started while buffering was off change the volume and then
+ * still fire on release (or swallow only half of a press the other way
+ * round). A claimed press consumes its DOWN (including auto-repeats) so the
+ * volume HUD never shows up, and fires on release rather than press so a
+ * single press can't double-fire via auto-repeat -- unless the system
+ * canceled it (it turned into a system gesture/long-press action) or
+ * buffering/the setting went away meanwhile, in which case it's just consumed.
+ *
+ * [enterAllowed] is about KEYCODE_ENTER only: it's also how keyboards and
+ * switch access activate things, so it's a trigger only when MainActivity has
+ * established it can't be one of those.
+ *
+ * Not thread-safe; only used from the main thread's dispatchKeyEvent.
  */
-internal fun decideHardwareKey(
-    enabled: Boolean,
-    buffering: Boolean,
-    keyCode: Int,
-    isDown: Boolean,
-    isUp: Boolean,
-    repeatCount: Int,
-    isCanceled: Boolean,
-): KeyDecision {
-    if (!enabled || !buffering || hardwareTriggerSource(keyCode) == null) return KeyDecision.PASS_THROUGH
-    if (isDown) return KeyDecision.CONSUME
-    if (isUp && repeatCount == 0 && !isCanceled) return KeyDecision.TRIGGER
-    return KeyDecision.CONSUME
+internal class HardwareKeyTracker {
+    private val claimedKeys = HashSet<Int>()
+
+    fun decide(
+        enabled: Boolean,
+        buffering: Boolean,
+        enterAllowed: Boolean,
+        keyCode: Int,
+        isDown: Boolean,
+        isUp: Boolean,
+        repeatCount: Int,
+        isCanceled: Boolean,
+    ): KeyDecision {
+        val isTrigger = hardwareTriggerSource(keyCode) != null && (keyCode != KeyEvent.KEYCODE_ENTER || enterAllowed)
+        if (isDown && repeatCount == 0) {
+            // A fresh press always decides anew, so a release lost to a focus
+            // change can't leave the key claimed forever.
+            claimedKeys.remove(keyCode)
+            if (!enabled || !buffering || !isTrigger) return KeyDecision.PASS_THROUGH
+            claimedKeys.add(keyCode)
+            return KeyDecision.CONSUME
+        }
+        if (isUp) {
+            if (!claimedKeys.remove(keyCode)) return KeyDecision.PASS_THROUGH
+            return if (enabled && buffering && repeatCount == 0 && !isCanceled) KeyDecision.TRIGGER else KeyDecision.CONSUME
+        }
+        return if (keyCode in claimedKeys) KeyDecision.CONSUME else KeyDecision.PASS_THROUGH
+    }
 }

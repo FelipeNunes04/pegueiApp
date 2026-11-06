@@ -320,10 +320,98 @@ enum SessionRestartBackoff {
 /// ends up with a "saved" chime for a clip that doesn't play. Returns nil
 /// when the file is a real clip, otherwise the (pt-BR, user-facing) reason.
 enum SaveVerification {
-    static func failureReason(fileExists: Bool, fileSizeBytes: Int64, videoTrackCount: Int) -> String? {
+    /// `videoTrackCount` is nil when the track load didn't finish in time:
+    /// unverified, not bad, so the file is kept.
+    static func failureReason(fileExists: Bool, fileSizeBytes: Int64, videoTrackCount: Int?) -> String? {
         guard fileExists else { return "O arquivo do clipe não foi criado." }
         guard fileSizeBytes > 0 else { return "O arquivo do clipe ficou vazio." }
-        guard videoTrackCount > 0 else { return "O clipe salvo não contém vídeo." }
+        if let videoTrackCount, videoTrackCount == 0 { return "O clipe salvo não contém vídeo." }
         return nil
+    }
+}
+
+/// How long a save may run before it counts as stuck. These bounds exist to
+/// catch a wedged AVAssetWriter, so they're deliberately generous: a slow save
+/// that gets aborted loses the user's clip, a stuck one that's reported late
+/// costs only a wait. Floors are the old fixed limits, which every long 4K60
+/// clip used to run into.
+enum SaveTimeouts {
+    static let muxFloorSeconds: TimeInterval = 30
+    static let finishFloorSeconds: TimeInterval = 10
+    static let ceilingSeconds: TimeInterval = 600
+    /// Pessimistic sustained mux rates (a hot device on utility QoS).
+    static let muxBytesPerSecond = 8.0 * 1024 * 1024
+    static let finishBytesPerSecond = 32.0 * 1024 * 1024
+
+    /// Appending every sample of the clip.
+    static func mux(clipDurationSeconds: Double, totalBytes: Int) -> TimeInterval {
+        let scaled = clipDurationSeconds * 0.5 + Double(totalBytes) / muxBytesPerSecond
+        return min(ceilingSeconds, max(muxFloorSeconds, scaled))
+    }
+
+    /// `finishWriting`, flushing whatever is still queued and the moov atom.
+    static func finish(totalBytes: Int) -> TimeInterval {
+        min(ceilingSeconds, max(finishFloorSeconds, Double(totalBytes) / finishBytesPerSecond))
+    }
+}
+
+/// When a manual recording, held entirely in RAM until it's saved, has to end
+/// before iOS jetsams the app and loses it. The cap counts head + tail, video
+/// + PCM audio.
+///
+/// 384 MB at the encoder's 0.12 bits/pixel/frame target comes to roughly 15
+/// min at 720p30, 6.5 min at 1080p30 and 50 s at 4K60. A long pre-roll at a
+/// high bitrate can fill that by itself (60 s of 4K60 is ~450 MB, and the ring
+/// buffer already holds that much in normal operation), so the cap always
+/// leaves room for 128 MB beyond the head instead of ending the take at once.
+/// That makes the cap scale with bitrate where it has to.
+///
+/// The fixed cap can't know the device, so the OS's own remaining-memory
+/// figure is checked too: a 4 GB iPhone can hit its limit well before an 8 GB
+/// one would, and saving needs some headroom of its own.
+enum ManualRecordingMemoryPolicy {
+    static let baseCapBytes = 384 * 1024 * 1024
+    static let minTailAllowanceBytes = 128 * 1024 * 1024
+    static let minAvailableMemoryBytes: UInt64 = 150 * 1024 * 1024
+
+    static func capBytes(headBytes: Int) -> Int {
+        max(baseCapBytes, headBytes + minTailAllowanceBytes)
+    }
+
+    /// `availableMemoryBytes` is `os_proc_available_memory()`, where 0 means
+    /// "not known" (Simulator) rather than "none left".
+    static func shouldFinalize(recordedBytes: Int, capBytes: Int, availableMemoryBytes: UInt64) -> Bool {
+        if recordedBytes >= capBytes { return true }
+        return availableMemoryBytes > 0 && availableMemoryBytes < minAvailableMemoryBytes
+    }
+}
+
+/// Bounds recovery that the watchdog's ladder can't see: a session throwing
+/// runtime errors can resume between them, so frames flow, the ladder resets,
+/// and restarts would otherwise go on forever while the pre-roll keeps getting
+/// wiped. Each recovery action spends from a sliding window; once it's empty
+/// the controller gives up. The default leaves room for the ladder's own two
+/// restarts plus a few independent incidents, and an occasional hiccup in a
+/// long session ages out of the window. Reset on every ordinary start.
+struct RecoveryBudget {
+    let maxActions: Int
+    let window: TimeInterval
+    private var actionTimes: [TimeInterval] = []
+
+    init(maxActions: Int = 5, window: TimeInterval = 300) {
+        self.maxActions = maxActions
+        self.window = window
+    }
+
+    /// Records one action and returns true, or false once the budget is spent.
+    mutating func consume(now: TimeInterval) -> Bool {
+        actionTimes.removeAll { now - $0 >= window }
+        guard actionTimes.count < maxActions else { return false }
+        actionTimes.append(now)
+        return true
+    }
+
+    mutating func reset() {
+        actionTimes.removeAll()
     }
 }

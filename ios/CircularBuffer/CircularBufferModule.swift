@@ -23,8 +23,31 @@ class CircularBufferModule: RCTEventEmitter {
     // see the bridge contract in
     // docs/plans/2026-10-21-reliability-battery-triggers.md. RCTEventEmitter
     // refuses (asserts in debug) to send any event name not listed here.
+    // CircularBufferRecordingFinalized ({ reason, path?, durationSeconds?,
+    // error? }) reports a manual recording native ended on its own.
     override func supportedEvents() -> [String]! {
-        return ["CircularBufferError", "CircularBufferHealth", "CircularBufferHardwareTrigger"]
+        return ["CircularBufferError", "CircularBufferHealth", "CircularBufferHardwareTrigger", "CircularBufferRecordingFinalized"]
+    }
+
+    private var mediaServicesResetObserver: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        // A media-server reset invalidates every AVAudioPlayer; they're
+        // rebuilt on next use.
+        mediaServicesResetObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.discardSoundPlayers()
+        }
+    }
+
+    deinit {
+        if let mediaServicesResetObserver {
+            NotificationCenter.default.removeObserver(mediaServicesResetObserver)
+        }
     }
 
     private var moviesDir: URL {
@@ -160,19 +183,39 @@ class CircularBufferModule: RCTEventEmitter {
     // apps like Voice Memos play their own start/stop chime while already
     // recording. The tones are synthesized in-process rather than bundled as
     // asset files, so no Xcode resource wiring is needed.
-    private lazy var startSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.12)])
-    private lazy var stopSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.09), (660, 0.09)])
+    private let soundPlayersLock = NSLock()
+    private var startSoundPlayer: AVAudioPlayer?
+    private var stopSoundPlayer: AVAudioPlayer?
 
     @objc
     func playRecordingStartSound() {
-        startSoundPlayer?.currentTime = 0
-        startSoundPlayer?.play()
+        soundPlayersLock.lock()
+        if startSoundPlayer == nil {
+            startSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.12)])
+        }
+        let player = startSoundPlayer
+        soundPlayersLock.unlock()
+        player?.currentTime = 0
+        player?.play()
     }
 
     @objc
     func playRecordingStopSound() {
-        stopSoundPlayer?.currentTime = 0
-        stopSoundPlayer?.play()
+        soundPlayersLock.lock()
+        if stopSoundPlayer == nil {
+            stopSoundPlayer = Self.makeBeepPlayer(notes: [(880, 0.09), (660, 0.09)])
+        }
+        let player = stopSoundPlayer
+        soundPlayersLock.unlock()
+        player?.currentTime = 0
+        player?.play()
+    }
+
+    private func discardSoundPlayers() {
+        soundPlayersLock.lock()
+        startSoundPlayer = nil
+        stopSoundPlayer = nil
+        soundPlayersLock.unlock()
     }
 
     private static func makeBeepPlayer(notes: [(frequency: Double, duration: Double)]) -> AVAudioPlayer? {
@@ -287,6 +330,18 @@ extension CircularBufferModule: CameraEncoderControllerDelegate {
             body["reason"] = reason
         }
         sendEvent(withName: "CircularBufferHealth", body: body)
+    }
+
+    func cameraEncoderController(_ controller: CameraEncoderController, didFinalizeRecordingWithReason reason: RecordingFinalizeReason, path: String?, durationSeconds: Double?, error: String?) {
+        var body: [String: Any] = ["reason": reason.rawValue]
+        if let path, let durationSeconds {
+            body["path"] = path
+            body["durationSeconds"] = durationSeconds
+        }
+        if let error {
+            body["error"] = error
+        }
+        sendEvent(withName: "CircularBufferRecordingFinalized", body: body)
     }
 }
 

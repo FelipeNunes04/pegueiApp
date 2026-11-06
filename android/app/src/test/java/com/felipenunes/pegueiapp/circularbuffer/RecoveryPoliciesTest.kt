@@ -10,7 +10,7 @@ import org.junit.Test
  * Covers the SDK-free error-escalation and health policies in
  * BufferPolicies.kt: MediaCodec.CodecException -> retry vs. rebuild,
  * camera-loss reopen backoff, CircularBufferHealth state resolution, and
- * save verification + the early-finalized-recording rendezvous.
+ * save verification, and how a manual recording is joined and capped.
  */
 class RecoveryPoliciesTest {
 
@@ -82,34 +82,56 @@ class RecoveryPoliciesTest {
         assertFalse(isSavedClipValid(exists = false, lengthBytes = 1234))
     }
 
-    // --- DeferredSaveOutcome ---
+    // --- joinHeadAndTail ---
+
+    private fun frame(ptsUs: Long) = EncodedFrame(byteArrayOf(1), ptsUs, false)
 
     @Test
-    fun `an outcome that arrives before stop is delivered when stop awaits it`() {
-        val deferred = DeferredSaveOutcome()
-        deferred.complete(SaveOutcome.Saved("/clips/a.mp4", 12.5))
-        var received: SaveOutcome? = null
-        deferred.await { received = it }
-        assertEquals(SaveOutcome.Saved("/clips/a.mp4", 12.5), received)
+    fun `a frame that landed in both pre-roll and tail is kept only once`() {
+        val shared = frame(200)
+        val head = listOf(frame(100), shared)
+        val tail = listOf(shared, frame(300))
+        assertEquals(listOf(100L, 200L, 300L), joinHeadAndTail(head, tail).map { it.presentationTimeUs })
     }
 
     @Test
-    fun `stop awaiting before the mux finishes gets the outcome once it completes`() {
-        val deferred = DeferredSaveOutcome()
-        var received: SaveOutcome? = null
-        deferred.await { received = it }
-        assertNull(received)
-        deferred.complete(SaveOutcome.Failed(CircularBufferErrorCodes.SAVE_FAILED, "boom"))
-        assertEquals(SaveOutcome.Failed(CircularBufferErrorCodes.SAVE_FAILED, "boom"), received)
+    fun `distinct frames are never dropped, even with an equal or earlier timestamp`() {
+        val head = listOf(frame(100), frame(200))
+        val tail = listOf(frame(200), frame(150))
+        assertEquals(4, joinHeadAndTail(head, tail).size)
     }
 
     @Test
-    fun `only the first outcome is ever delivered`() {
-        val deferred = DeferredSaveOutcome()
-        val received = mutableListOf<SaveOutcome>()
-        deferred.await { received.add(it) }
-        deferred.complete(SaveOutcome.Saved("/clips/a.mp4", 1.0))
-        deferred.complete(SaveOutcome.Saved("/clips/b.mp4", 2.0))
-        assertEquals(listOf<SaveOutcome>(SaveOutcome.Saved("/clips/a.mp4", 1.0)), received)
+    fun `either side may be empty`() {
+        val f = frame(100)
+        assertEquals(listOf(f), joinHeadAndTail(emptyList(), listOf(f)))
+        assertEquals(listOf(f), joinHeadAndTail(listOf(f), emptyList()))
+        assertTrue(joinHeadAndTail(emptyList(), emptyList()).isEmpty())
+    }
+
+    // --- manualRecordingByteCap ---
+
+    private val mib = 1024L * 1024L
+
+    @Test
+    fun `recording cap is half the heap limit`() {
+        assertEquals(128 * mib, manualRecordingByteCap(256 * mib))
+        assertEquals(256 * mib, manualRecordingByteCap(512 * mib))
+    }
+
+    @Test
+    fun `recording cap is clamped on very small and very large heaps`() {
+        assertEquals(64 * mib, manualRecordingByteCap(96 * mib))
+        assertEquals(384 * mib, manualRecordingByteCap(4096 * mib))
+    }
+
+    // --- RecordingFinalizeReason ---
+
+    @Test
+    fun `finalize reasons match the bridge contract`() {
+        assertEquals(
+            listOf("stopped", "recovery", "memoryLimit"),
+            RecordingFinalizeReason.values().map { it.wire },
+        )
     }
 }

@@ -152,6 +152,70 @@ describe('usePocketMode', () => {
     expect(result.current.isActive).toBe(false);
   });
 
+  // iOS Control Center / call alert: the screen is still ours, and native
+  // restores brightness on resign and re-dims on becoming active by itself.
+  it('stays on through inactive without touching the native state', async () => {
+    const { result } = await setup();
+    await act(async () => {
+      result.current.enter();
+    });
+    mockedModule.setPocketMode.mockClear();
+
+    await act(async () => {
+      appStateHandler?.('inactive');
+    });
+    expect(result.current.isActive).toBe(true);
+
+    await act(async () => {
+      appStateHandler?.('active');
+    });
+    expect(result.current.isActive).toBe(true);
+    expect(mockedModule.setPocketMode).not.toHaveBeenCalled();
+  });
+
+  it('exits on the background that follows inactive', async () => {
+    const { result } = await setup();
+    await act(async () => {
+      result.current.enter();
+    });
+
+    await act(async () => {
+      appStateHandler?.('inactive');
+    });
+    await act(async () => {
+      appStateHandler?.('background');
+    });
+
+    expect(result.current.isActive).toBe(false);
+    expect(mockedModule.setPocketMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does not auto-enter while inactive, and restarts the countdown on return', async () => {
+    const { result } = await setup();
+    await act(async () => {
+      jest.advanceTimersByTime(15_000);
+    });
+    await act(async () => {
+      appStateHandler?.('inactive');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+    });
+    expect(result.current.isActive).toBe(false);
+
+    await act(async () => {
+      appStateHandler?.('active');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(19_000);
+    });
+    expect(result.current.isActive).toBe(false);
+    await act(async () => {
+      jest.advanceTimersByTime(1_000);
+    });
+    expect(result.current.isActive).toBe(true);
+  });
+
   it('restores the screen on unmount while active, and does nothing on unmount otherwise', async () => {
     const active = await setup();
     await act(async () => {

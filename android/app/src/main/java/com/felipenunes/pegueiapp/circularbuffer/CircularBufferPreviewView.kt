@@ -28,6 +28,9 @@ class CircularBufferPreviewView(context: Context) : TextureView(context), Textur
     private var ratioWidth = 0
     private var ratioHeight = 0
 
+    /** Wraps the current SurfaceTexture; ours to release, see [onSurfaceTextureDestroyed]. */
+    private var previewSurface: Surface? = null
+
     init {
         surfaceTextureListener = this
     }
@@ -59,13 +62,21 @@ class CircularBufferPreviewView(context: Context) : TextureView(context), Textur
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
         if (!isActive) return
-        CameraEncoderController.attachPreviewSurface(this, surface, Surface(surface), width, height)
+        previewSurface?.release()
+        val newSurface = Surface(surface)
+        previewSurface = newSurface
+        CameraEncoderController.attachPreviewSurface(this, surface, newSurface, width, height)
     }
 
     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
         CameraEncoderController.detachPreviewSurface()
+        // Only after detaching, so the controller is done with it. Returning true
+        // has the SurfaceTexture itself released, leaving this wrapper with nothing
+        // behind it anyway, even if a soft-detached session still lists it as an output.
+        previewSurface?.release()
+        previewSurface = null
         return true
     }
 

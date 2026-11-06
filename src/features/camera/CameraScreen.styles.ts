@@ -41,6 +41,17 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  noticeBanner: {
+    position: 'absolute',
+    top: 100,
+    left: 16,
+    right: 16,
+    backgroundColor: colors.surfaceDark,
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   errorText: { ...typography.body, color: 'white', flex: 1 },
   errorDismiss: { ...typography.bodyStrong, color: 'white', marginLeft: 12 },
 });

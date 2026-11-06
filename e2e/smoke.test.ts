@@ -20,7 +20,7 @@ describe('Peguei smoke test', () => {
     await element(by.id('onboarding-skip')).tap();
 
     if (await isVisible('permissions-screen')) {
-      for (const key of ['permission-card-camera', 'permission-card-storage']) {
+      for (const key of ['permission-card-camera', 'permission-card-microphone']) {
         const card = element(by.id(key));
         await card.tap().catch(() => undefined);
       }

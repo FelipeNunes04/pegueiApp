@@ -102,6 +102,18 @@ export type CircularBufferErrorEvent = { code: string; message: string };
 /** Emitted only on transitions -- see BufferHealth in shared/types. */
 export type CircularBufferHealthEvent = { state: BufferHealth; reason?: string };
 
+/**
+ * Emitted when native ends an in-flight manual recording on its own. By then
+ * native has already saved the clip (`path`) or failed (`error`). Binaries
+ * older than this contract simply never emit it.
+ */
+export type CircularBufferRecordingFinalizedEvent = {
+  reason: 'stopped' | 'recovery' | 'memoryLimit';
+  path?: string;
+  durationSeconds?: number;
+  error?: string;
+};
+
 export type HardwareTriggerSource = 'volumeUp' | 'volumeDown' | 'camera' | 'media' | 'enter' | 'captureButton';
 
 export type CircularBufferHardwareTriggerEvent = { source: HardwareTriggerSource };

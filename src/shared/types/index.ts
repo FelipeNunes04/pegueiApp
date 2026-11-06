@@ -61,7 +61,7 @@ export interface AppSettings {
   autoStopMinutes: AutoStopMinutes;
 }
 
-export type PermissionKey = 'camera' | 'storage' | 'microphone';
+export type PermissionKey = 'camera' | 'microphone';
 
 export type PermissionStatus = 'unknown' | 'granted' | 'denied' | 'blocked';
 
