@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Platform, Vibration } from 'react-native';
+import { AppState, Platform, Vibration } from 'react-native';
 import RNFS from 'react-native-fs';
 import { requestNotifications } from 'react-native-permissions';
-import { CircularBufferModule, circularBufferEvents, type CircularBufferErrorEvent } from '../native/CircularBufferModule';
+import {
+  CircularBufferModule,
+  circularBufferEvents,
+  type CircularBufferErrorEvent,
+  type CircularBufferHealthEvent,
+  type CircularBufferRecordingFinalizedEvent,
+} from '../native/CircularBufferModule';
 import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
 import { encodeClipFilename } from '../../../shared/utils/files';
 import { logClipSaved } from '../../../shared/utils/analytics';
 import { resolveSupportedFps, resolveSupportedQuality } from '../../../shared/utils/captureCapabilities';
-import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
+import { VIDEO_QUALITY_PRESETS, type RecordingPhase, type SavedClip } from '../../../shared/types';
 
 /**
  * Owns the lifecycle of the native circular buffer: start on mount (once
@@ -29,31 +35,83 @@ import { VIDEO_QUALITY_PRESETS, type SavedClip } from '../../../shared/types';
  */
 // Distinct vibration patterns (single short pulse vs. two short pulses) so
 // start/stop are also distinguishable by feel, on top of the distinct start/
-// stop system sounds (see CircularBufferModule.playRecordingStartSound/
-// StopSound). Sound is Android-only: iOS mutes AudioServicesPlaySystemSound
-// for the entire duration of an active .playAndRecord session (confirmed
-// on-device even after opting in via setAllowHapticsAndSystemSoundsDuring
-// Recording), so there's currently no reliable way to make it audible there.
+// stop sounds (see CircularBufferModule.playRecordingStartSound/StopSound --
+// Android plays a MediaActionSound, iOS a synthesized AVAudioPlayer tone).
 function playStartFeedback() {
   Vibration.vibrate(40);
-  if (Platform.OS === 'android') {
-    try {
-      CircularBufferModule.playRecordingStartSound();
-    } catch {
-      // Non-fatal: an unlinked/unavailable native module must not block recording.
-    }
+  try {
+    CircularBufferModule.playRecordingStartSound();
+  } catch {
+    // Non-fatal: an unlinked/unavailable native module must not block recording.
   }
 }
 
 function playStopFeedback() {
   Vibration.vibrate([0, 40, 80, 40]);
-  if (Platform.OS === 'android') {
-    try {
-      CircularBufferModule.playRecordingStopSound();
-    } catch {
-      // Non-fatal: see playStartFeedback.
-    }
+  try {
+    CircularBufferModule.playRecordingStopSound();
+  } catch {
+    // Non-fatal: see playStartFeedback.
   }
+}
+
+// Asked once per app session: start() also runs for every automatic restart
+// (settings change, foreground return, retried setup), none of which should
+// re-prompt the user.
+let notificationPermissionRequested = false;
+
+export function resetNotificationPermissionRequestForTests() {
+  notificationPermissionRequested = false;
+}
+
+// Rename to embed the real duration in the filename so a cold directory
+// listing (listSavedClips, used by GalleryScreen and after app restarts) can
+// recover it without decoding the video -- see the comment on
+// encodeClipFilename in utils/files.ts.
+async function renameClipWithDuration(path: string, createdAt: number, durationSeconds: number): Promise<string> {
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  const renamedPath = `${dir}/${encodeClipFilename(createdAt, durationSeconds * 1000)}`;
+  try {
+    await RNFS.moveFile(path, renamedPath);
+    return renamedPath;
+  } catch {
+    // Non-fatal: keep the clip under its original path/name if the rename
+    // fails -- it's still saved and playable, it just won't show its real
+    // duration on a cold directory re-listing. Not worth failing the whole
+    // save over a rename.
+    return path;
+  }
+}
+
+const FINALIZED_REASON_TEXT: Record<CircularBufferRecordingFinalizedEvent['reason'], string> = {
+  stopped: 'o buffer foi desligado',
+  recovery: 'a câmera foi reiniciada',
+  memoryLimit: 'limite de memória atingido',
+};
+
+function finalizedMessage(reason: CircularBufferRecordingFinalizedEvent['reason'], outcome: string): string {
+  const why = FINALIZED_REASON_TEXT[reason];
+  return why ? `Gravação encerrada: ${why}. ${outcome}` : `Gravação encerrada. ${outcome}`;
+}
+
+// Only moves out of an in-progress recording: a restart may already have put
+// the phase back on 'buffering' by the time this arrives, and forcing 'idle'
+// over that would strand a live buffer showing "Parado".
+function phaseAfterFinalized(
+  current: RecordingPhase,
+  reason: CircularBufferRecordingFinalizedEvent['reason'],
+): RecordingPhase {
+  if (current !== 'recording' && current !== 'saving') {
+    return current;
+  }
+  return reason === 'stopped' ? 'idle' : 'buffering';
+}
+
+// Native rejects stopManualRecording() with this message (code E_SAVE_FAILED,
+// shared with real save failures, so the code alone can't tell them apart)
+// when it already ended the recording on its own.
+function isNoRecordingInProgress(err: unknown): boolean {
+  return err instanceof Error && /nenhuma gravação em andamento|no recording in progress/i.test(err.message);
 }
 
 export function useCircularBuffer() {
@@ -67,11 +125,26 @@ export function useCircularBuffer() {
   const setPhase = useRecordingStore(s => s.setPhase);
   const setError = useRecordingStore(s => s.setError);
   const addClip = useRecordingStore(s => s.addClip);
+  const setBufferHealth = useRecordingStore(s => s.setBufferHealth);
+  const setNotice = useRecordingStore(s => s.setNotice);
 
   const isMountedRef = useRef(true);
   useEffect(() => () => {
     isMountedRef.current = false;
   }, []);
+
+  // Bumped by every start()/stop(): only the latest call may touch the phase.
+  // CameraScreen's effect runs stop() then start() back to back on a config
+  // change, and start() reaches setPhase('buffering') long before stop()'s
+  // native round-trip resolves -- without this, stop() would then overwrite
+  // it with 'idle' while the new buffer is running.
+  const lifecycleGenerationRef = useRef(0);
+  // True from a successful startManualRecording() until that recording is
+  // accounted for by stopRecording() or CircularBufferRecordingFinalized.
+  const recordingActiveRef = useRef(false);
+  // The clip the finalized event already handled, in case an in-flight
+  // stopManualRecording() also resolves with it.
+  const finalizedPathRef = useRef<string | null>(null);
 
   // Errors that happen after startBuffering()'s promise already resolved
   // (camera becomes busy, session disconnected mid-buffer) have no pending
@@ -117,7 +190,75 @@ export function useCircularBuffer() {
     return () => subscription.remove();
   }, [setPhase]);
 
+  // Native watchdog/thermal/interruption state (see the bridge contract in
+  // docs/plans/2026-10-21-reliability-battery-triggers.md). Emitted only on
+  // transitions, so the store keeps the last one until start()/stop()
+  // resets it -- a fresh pipeline is healthy until told otherwise. Both
+  // platforms declare this event (iOS lists it in supportedEvents()), so
+  // unlike CircularBufferStoppedExternally it isn't platform-gated.
+  useEffect(() => {
+    if (!circularBufferEvents) {
+      return undefined;
+    }
+    const subscription = circularBufferEvents.addListener(
+      'CircularBufferHealth',
+      (event: CircularBufferHealthEvent) => {
+        if (isMountedRef.current) {
+          setBufferHealth(event.state);
+        }
+      },
+    );
+    return () => subscription.remove();
+  }, [setBufferHealth]);
+
+  // Native ended the recording on its own (buffer stopped, pipeline recovery,
+  // memory cap) and already saved or failed the clip, so this finishes what
+  // stopRecording() would have: feedback, gallery entry, phase.
+  useEffect(() => {
+    if (!circularBufferEvents) {
+      return undefined;
+    }
+    const handleFinalized = async (event: CircularBufferRecordingFinalizedEvent) => {
+      if (!recordingActiveRef.current && useRecordingStore.getState().phase !== 'recording') {
+        return;
+      }
+      recordingActiveRef.current = false;
+      playStopFeedback();
+
+      if (event.error || !event.path) {
+        const current = useRecordingStore.getState().phase;
+        setError(finalizedMessage(event.reason, 'Não foi possível salvar o vídeo.'));
+        setPhase(phaseAfterFinalized(current, event.reason));
+        return;
+      }
+
+      finalizedPathRef.current = event.path;
+      const createdAt = Date.now();
+      const durationSeconds = event.durationSeconds ?? 0;
+      const finalPath =
+        event.durationSeconds === undefined
+          ? event.path
+          : await renameClipWithDuration(event.path, createdAt, durationSeconds);
+      if (isMountedRef.current) {
+        addClip({ id: `${createdAt}`, path: finalPath, createdAt, durationSeconds, triggeredBy: 'manual' });
+        setNotice(finalizedMessage(event.reason, 'O vídeo foi salvo.'));
+        setPhase(phaseAfterFinalized(useRecordingStore.getState().phase, event.reason));
+      }
+      logClipSaved(durationSeconds);
+    };
+    // An older iOS binary doesn't declare this event, and subscribing to an
+    // undeclared one can throw (see the Android-only listener above). This
+    // listener is optional, so that must not take the screen down.
+    try {
+      const subscription = circularBufferEvents.addListener('CircularBufferRecordingFinalized', handleFinalized);
+      return () => subscription.remove();
+    } catch {
+      return undefined;
+    }
+  }, [setError, setPhase, addClip, setNotice]);
+
   const start = useCallback(async () => {
+    const generation = ++lifecycleGenerationRef.current;
     try {
       // Best-effort/fire-and-forget: lets the Android background-recording
       // notification (see CircularBufferForegroundService) actually show up.
@@ -125,7 +266,8 @@ export function useCircularBuffer() {
       // permission must not block recording, it only means the foreground
       // service runs invisibly (still functionally protected). iOS has no
       // equivalent background-recording feature, so this is skipped there.
-      if (Platform.OS === 'android') {
+      if (Platform.OS === 'android' && !notificationPermissionRequested) {
+        notificationPermissionRequested = true;
         requestNotifications([]).catch(() => undefined);
       }
       // Guards against a persisted quality/fps the device can't actually
@@ -138,41 +280,92 @@ export function useCircularBuffer() {
       // harmless start/stop cycle -- the buffer already started correctly
       // with the resolved values on *this* call either way.
       const capabilities = await loadCaptureCapabilities();
+      if (generation !== lifecycleGenerationRef.current) {
+        return;
+      }
       const resolvedQuality = resolveSupportedQuality(capabilities, videoQuality);
       const resolvedFps = resolveSupportedFps(capabilities, resolvedQuality, fps);
       if (resolvedQuality !== videoQuality) setVideoQuality(resolvedQuality);
       if (resolvedFps !== fps) setFps(resolvedFps);
 
       const preset = VIDEO_QUALITY_PRESETS[resolvedQuality];
+      // Set *before* the native call: startBuffering() resolves as soon as
+      // the session is armed, and a setup failure (e.g. no back camera,
+      // camera busy) arrives separately as a CircularBufferError event on
+      // another thread -- often before this promise's resolution reaches JS.
+      // Setting 'buffering' after the await let that resolution overwrite
+      // the 'error' phase, leaving "Sempre gravando" (and its pulse) on
+      // screen with nothing recording.
+      if (isMountedRef.current) {
+        setBufferHealth('healthy');
+        setPhase('buffering');
+      }
       await CircularBufferModule.startBuffering({
         bufferSeconds,
         width: preset.width,
         height: preset.height,
         fps: resolvedFps,
       });
-      if (isMountedRef.current) {
-        setPhase('buffering');
-      }
     } catch (err) {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && generation === lifecycleGenerationRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
     }
-  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError]);
+  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError, setBufferHealth]);
+
+  // Neither platform can keep the actual Camera2/AVCaptureSession alive once
+  // the OS backgrounds the app (Android: revoked outright without a
+  // foreground service, see FeatureFlags.BACKGROUND_RECORDING_ENABLED; iOS:
+  // always suspended, see DECISIONS.md "Background recording"), and unlike
+  // in-app navigation to Settings/Gallery, backgrounding never
+  // detaches/reattaches the native preview view -- so nothing else re-triggers
+  // a restart. Without this, returning to the app after backgrounding it
+  // would leave the buffer silently dead until the user happened to navigate
+  // elsewhere and back. isBuffering() is checked first so this never
+  // interrupts a buffer that's still actually alive (e.g. Android with the
+  // background-recording flag on).
+  //
+  // Only a real trip through 'background' counts: on iOS, Control Center or
+  // an incoming call alert go active -> inactive -> active without the app
+  // ever leaving the screen, and restarting then would undo the inactivity
+  // auto-stop. A flag rather than the previous state, so a return that passes
+  // through 'inactive' on its way back still counts.
+  useEffect(() => {
+    let wasBackgrounded = AppState.currentState === 'background';
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'background') {
+        wasBackgrounded = true;
+        return;
+      }
+      if (nextState !== 'active' || !wasBackgrounded) return;
+      wasBackgrounded = false;
+      CircularBufferModule.isBuffering()
+        .then(stillBuffering => {
+          if (!stillBuffering && isMountedRef.current) {
+            start();
+          }
+        })
+        .catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, [start]);
 
   const stop = useCallback(async () => {
+    const generation = ++lifecycleGenerationRef.current;
     try {
       await CircularBufferModule.stopBuffering();
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && generation === lifecycleGenerationRef.current) {
+        setBufferHealth('healthy');
         setPhase('idle');
       }
     }
-  }, [setPhase]);
+  }, [setPhase, setBufferHealth]);
 
   const startRecording = useCallback(async () => {
     try {
       await CircularBufferModule.startManualRecording();
+      recordingActiveRef.current = true;
       if (isMountedRef.current) {
         setPhase('recording');
         playStartFeedback();
@@ -198,6 +391,7 @@ export function useCircularBuffer() {
           }
           try {
             await CircularBufferModule.startManualRecording();
+            recordingActiveRef.current = true;
             if (isMountedRef.current) {
               setPhase('recording');
               playStartFeedback();
@@ -220,27 +414,15 @@ export function useCircularBuffer() {
     setPhase('saving');
     try {
       const result = await CircularBufferModule.stopManualRecording();
+      recordingActiveRef.current = false;
+      if (result.path === finalizedPathRef.current) {
+        return null;
+      }
       if (isMountedRef.current) {
         playStopFeedback();
       }
       const createdAt = Date.now();
-
-      // Rename to embed the real duration in the filename so a cold
-      // directory listing (listSavedClips, used by GalleryScreen and after
-      // app restarts) can recover it without decoding the video -- see the
-      // comment on encodeClipFilename in utils/files.ts.
-      const dir = result.path.slice(0, result.path.lastIndexOf('/'));
-      const renamedPath = `${dir}/${encodeClipFilename(createdAt, result.durationSeconds * 1000)}`;
-      let finalPath = result.path;
-      try {
-        await RNFS.moveFile(result.path, renamedPath);
-        finalPath = renamedPath;
-      } catch {
-        // Non-fatal: keep the clip under its original path/name if the
-        // rename fails -- it's still saved and playable, it just won't show
-        // its real duration on a cold directory re-listing. Not worth
-        // failing the whole save over a rename.
-      }
+      const finalPath = await renameClipWithDuration(result.path, createdAt, result.durationSeconds);
 
       const clip: SavedClip = {
         id: `${createdAt}`,
@@ -256,6 +438,18 @@ export function useCircularBuffer() {
       logClipSaved(result.durationSeconds);
       return clip;
     } catch (err) {
+      // Native already ended this recording on its own: not a failed save.
+      // The finalized event (which may still be on its way, so
+      // recordingActiveRef stays set for it) reports the outcome; all that's
+      // left here is not staying stuck on 'saving'.
+      if (isNoRecordingInProgress(err)) {
+        const stillBuffering = await CircularBufferModule.isBuffering().catch(() => true);
+        if (isMountedRef.current && useRecordingStore.getState().phase === 'saving') {
+          setPhase(stillBuffering ? 'buffering' : 'idle');
+        }
+        return null;
+      }
+      recordingActiveRef.current = false;
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível salvar o clipe.');
         // The native buffer keeps running regardless of whether this one

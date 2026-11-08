@@ -71,6 +71,12 @@ export function GalleryScreen({ navigation }: Props) {
     try {
       const found = await listSavedClips();
       setClips(found);
+    } catch {
+      // An unreadable clips folder (readDir/exists/mkdir failing) must not
+      // surface as an unhandled rejection -- both callers (mount effect and
+      // pull-to-refresh) fire-and-forget this. Keeping whatever list is
+      // already shown is the least surprising outcome; with nothing loaded
+      // yet, that's the empty state.
     } finally {
       setLoading(false);
     }

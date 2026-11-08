@@ -18,6 +18,14 @@ module.exports = {
       build:
         'xcodebuild -workspace ios/Peguei.xcworkspace -scheme Peguei -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build/DerivedData',
     },
+    // Release embeds the JS bundle, so runs never depend on (or collide
+    // with) whatever Metro server happens to own port 8081 on this machine.
+    'ios.release': {
+      type: 'ios.app',
+      binaryPath: 'ios/build/DerivedData/Build/Products/Release-iphonesimulator/Peguei.app',
+      build:
+        'xcodebuild -workspace ios/Peguei.xcworkspace -scheme Peguei -configuration Release -sdk iphonesimulator -derivedDataPath ios/build/DerivedData',
+    },
     'android.debug': {
       type: 'android.apk',
       binaryPath: 'android/app/build/outputs/apk/debug/app-debug.apk',
@@ -30,11 +38,12 @@ module.exports = {
   devices: {
     simulator: {
       type: 'ios.simulator',
-      device: { type: 'iPhone 15' },
+      // Override with DETOX_IOS_DEVICE on machines without this simulator.
+      device: { type: process.env.DETOX_IOS_DEVICE || 'iPhone 17' },
     },
     emulator: {
       type: 'android.emulator',
-      device: { avdName: 'Pixel_API_34' },
+      device: { avdName: 'Pixel_9_Pro_XL_API_35' },
     },
     // App Store screenshot sizes: 6.9" (required) and 6.5" (legacy size
     // class App Store Connect still accepts screenshots for).
@@ -59,6 +68,10 @@ module.exports = {
     'ios.sim.debug': {
       device: 'simulator',
       app: 'ios.debug',
+    },
+    'ios.sim.release': {
+      device: 'simulator',
+      app: 'ios.release',
     },
     'android.emu.debug': {
       device: 'emulator',

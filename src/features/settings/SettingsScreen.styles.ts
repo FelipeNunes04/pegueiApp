@@ -23,6 +23,14 @@ export const styles = StyleSheet.create({
   },
   pillActive: { backgroundColor: colors.accent, color: colors.textLight },
   pillDisabled: { opacity: 0.35 },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  switchLabel: { ...typography.body, color: 'rgba(242,245,245,0.8)', flex: 1, marginRight: 12 },
+  batterySection: { marginTop: 24 },
   pixBox: {
     backgroundColor: colors.surfaceDark,
     borderRadius: 12,

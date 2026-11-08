@@ -47,4 +47,11 @@ describe('recordingStore', () => {
     useRecordingStore.getState().setClips([makeClip('x'), makeClip('y')]);
     expect(useRecordingStore.getState().clips.map(c => c.id)).toEqual(['x', 'y']);
   });
+
+  it('tracks the native buffer health, healthy by default', () => {
+    expect(useRecordingStore.getState().bufferHealth).toBe('healthy');
+    useRecordingStore.getState().setBufferHealth('throttled');
+    expect(useRecordingStore.getState().bufferHealth).toBe('throttled');
+    useRecordingStore.getState().setBufferHealth('healthy');
+  });
 });

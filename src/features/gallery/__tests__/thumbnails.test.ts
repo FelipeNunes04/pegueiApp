@@ -67,3 +67,31 @@ describe('getClipThumbnail', () => {
     expect(mockedCreateThumbnail).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('getClipThumbnail result normalisation', () => {
+  beforeEach(() => {
+    mockedCreateThumbnail.mockReset();
+    Platform.OS = 'ios';
+  });
+
+  it('does not double-prefix a thumbnail path that already has a file:// scheme', async () => {
+    mockedCreateThumbnail.mockResolvedValue({ path: 'file:///already/prefixed.jpg' });
+
+    await expect(getClipThumbnail('/clips/prefixed-thumb.mp4')).resolves.toBe(
+      'file:///already/prefixed.jpg',
+    );
+  });
+
+  it('shares one in-flight native request between concurrent callers for the same clip', async () => {
+    mockedCreateThumbnail.mockResolvedValue({ path: '/thumb.jpg' });
+
+    const [a, b] = await Promise.all([
+      getClipThumbnail('/clips/concurrent.mp4'),
+      getClipThumbnail('/clips/concurrent.mp4'),
+    ]);
+
+    expect(a).toBe('file:///thumb.jpg');
+    expect(b).toBe('file:///thumb.jpg');
+    expect(mockedCreateThumbnail).toHaveBeenCalledTimes(1);
+  });
+});

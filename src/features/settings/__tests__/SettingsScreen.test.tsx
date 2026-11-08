@@ -10,6 +10,8 @@ import { CircularBufferModule } from '../../camera/native/CircularBufferModule';
 jest.mock('../../camera/native/CircularBufferModule', () => ({
   CircularBufferModule: {
     getCaptureCapabilities: jest.fn().mockResolvedValue({ supportedQualities: [], fpsByQuality: {} }),
+    isIgnoringBatteryOptimizations: jest.fn().mockResolvedValue(false),
+    openBatteryOptimizationSettings: jest.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -153,5 +155,55 @@ describe('SettingsScreen', () => {
     await fireEvent.press(getByTestId('settings-back'));
 
     expect(goBackMock).toHaveBeenCalled();
+  });
+
+  it('toggles pocket-mode auto-enter and picks its delay (pills hidden while off)', async () => {
+    const { getByTestId, queryByTestId } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(getByTestId('pocket-mode-auto-switch').props.value).toBe(true);
+    expect(getByTestId('pocket-delay-20').props.accessibilityState).toMatchObject({ selected: true });
+
+    await fireEvent.press(getByTestId('pocket-delay-30'));
+    expect(useSettingsStore.getState().pocketModeDelaySeconds).toBe(30);
+
+    await fireEvent(getByTestId('pocket-mode-auto-switch'), 'valueChange', false);
+    expect(useSettingsStore.getState().pocketModeAutoEnabled).toBe(false);
+    expect(queryByTestId('pocket-delay-30')).toBeNull();
+  });
+
+  it('toggles the hardware-trigger setting, with an iOS version note on iOS', async () => {
+    Platform.OS = 'ios';
+    const { getByTestId, getByText } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(getByText(/iOS 17.2/)).toBeTruthy();
+    expect(getByTestId('hardware-triggers-switch').props.value).toBe(true);
+    await fireEvent(getByTestId('hardware-triggers-switch'), 'valueChange', false);
+    expect(useSettingsStore.getState().hardwareTriggersEnabled).toBe(false);
+  });
+
+  it('defaults auto-stop to "Nunca" and changes it when a pill is pressed', async () => {
+    const { getByTestId } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(getByTestId('auto-stop-0').props.accessibilityState).toMatchObject({ selected: true });
+    await fireEvent.press(getByTestId('auto-stop-60'));
+    expect(useSettingsStore.getState().autoStopMinutes).toBe(60);
+  });
+
+  it('shows the battery-optimization row with its status and settings button on Android only', async () => {
+    Platform.OS = 'android';
+    const { getByTestId } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    await waitFor(() =>
+      expect(getByTestId('battery-optimization-status').props.children).toMatch(/Otimizada/),
+    );
+    await fireEvent.press(getByTestId('battery-optimization-action'));
+    expect(mockedModule.openBatteryOptimizationSettings).toHaveBeenCalled();
+  });
+
+  it('does not show the battery-optimization row on iOS', async () => {
+    Platform.OS = 'ios';
+    const { queryByTestId } = await render(<SettingsScreen navigation={fakeNavigation} route={{} as never} />);
+
+    expect(queryByTestId('battery-optimization-card')).toBeNull();
   });
 });

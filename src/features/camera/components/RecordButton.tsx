@@ -16,6 +16,13 @@ interface Props {
   phase: RecordingPhase;
   onPress: () => void;
   disabled?: boolean;
+  /**
+   * True while pocket mode covers the screen: stops the JS-driven pulse
+   * loop and the 250 ms elapsed-time interval (both invisible behind the
+   * black overlay). The recording start time is kept, so the readout is
+   * correct again the moment pocket mode exits.
+   */
+  paused?: boolean;
 }
 
 const CONFIRM_FLASH_MS = 700;
@@ -37,7 +44,7 @@ function formatElapsed(ms: number): string {
  * -> brief checkmark (saved) convention from native camera apps, with no
  * text label beyond a live elapsed-time readout while recording.
  */
-export function RecordButton({ phase, onPress, disabled }: Props) {
+export function RecordButton({ phase, onPress, disabled, paused = false }: Props) {
   const isRecording = phase === 'recording';
   const isSaving = phase === 'saving';
   const isDisabled = Boolean(disabled) || isSaving;
@@ -48,8 +55,10 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
   const prevPhaseRef = useRef(phase);
   const recordingStartRef = useRef<number | null>(null);
 
+  const shouldAnimate = isRecording && !paused;
+
   useEffect(() => {
-    if (!isRecording) {
+    if (!shouldAnimate) {
       pulse.setValue(1);
       return undefined;
     }
@@ -71,21 +80,25 @@ export function RecordButton({ phase, onPress, disabled }: Props) {
     );
     loop.start();
     return () => loop.stop();
-  }, [isRecording, pulse]);
+  }, [shouldAnimate, pulse]);
+
+  // Start time and the ticking interval are separate effects so pausing
+  // (pocket mode) only stops the ticking, never resets the start time.
+  useEffect(() => {
+    recordingStartRef.current = isRecording ? Date.now() : null;
+    setElapsedMs(0);
+  }, [isRecording]);
 
   useEffect(() => {
-    if (!isRecording) {
-      recordingStartRef.current = null;
-      setElapsedMs(0);
+    if (!shouldAnimate) {
       return undefined;
     }
-    recordingStartRef.current = Date.now();
-    setElapsedMs(0);
-    const interval = setInterval(() => {
+    const tick = () =>
       setElapsedMs(Date.now() - (recordingStartRef.current ?? Date.now()));
-    }, 250);
+    tick();
+    const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [shouldAnimate]);
 
   useEffect(() => {
     const wasSaving = prevPhaseRef.current === 'saving';

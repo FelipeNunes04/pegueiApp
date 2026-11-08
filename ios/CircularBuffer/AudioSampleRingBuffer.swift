@@ -17,6 +17,9 @@ struct AudioSampleFrame {
     let data: Data
     let presentationTimeUs: Int64
     let numSamples: Int
+    /// The format this chunk was captured in, which an audio route change can
+    /// alter mid-session. Retaining the description holds no pool buffer.
+    let formatDescription: CMFormatDescription
 }
 
 /// Pure ring buffer of copied-out audio chunks, mirroring `FrameRingBuffer`'s

@@ -44,3 +44,52 @@ describe('RecordButton', () => {
     );
   });
 });
+
+describe('RecordButton while paused (pocket mode)', () => {
+  const { act } = require('@testing-library/react-native');
+  const { Animated } = require('react-native');
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it('stops the pulse loop and the elapsed-time ticking, then resumes with the real elapsed time', async () => {
+    const loopSpy = jest.spyOn(Animated, 'loop');
+    const { getByText, rerender } = await render(
+      <RecordButton phase="recording" onPress={jest.fn()} />,
+    );
+    expect(loopSpy).toHaveBeenCalledTimes(1);
+
+    loopSpy.mockClear();
+    await rerender(<RecordButton phase="recording" onPress={jest.fn()} paused />);
+    expect(loopSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(65_000);
+    });
+    // Frozen while paused -- nothing re-renders behind the black overlay.
+    expect(getByText('0:00')).toBeTruthy();
+
+    await rerender(<RecordButton phase="recording" onPress={jest.fn()} />);
+    expect(getByText('1:05')).toBeTruthy();
+    expect(loopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('briefly flashes a "Clipe salvo" confirmation after saving finishes', async () => {
+    const { getByTestId, rerender } = await render(
+      <RecordButton phase="saving" onPress={jest.fn()} />,
+    );
+    await rerender(<RecordButton phase="buffering" onPress={jest.fn()} />);
+    expect(getByTestId('record-button').props.accessibilityLabel).toBe('Clipe salvo');
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+    });
+    expect(getByTestId('record-button').props.accessibilityLabel).toBe('Iniciar gravação');
+  });
+});

@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ClipGridThumbnail } from '../components/ClipGridThumbnail';
 import { getClipThumbnail } from '../utils/thumbnails';
 import type { SavedClip } from '../../../shared/types';
@@ -133,5 +133,83 @@ describe('ClipGridThumbnail', () => {
     await waitFor(() =>
       expect(getByTestId(`clip-${clip.id}-image`)).toBeTruthy(),
     );
+  });
+
+  it('labels the cell for screen readers according to the selection state', async () => {
+    const clip = makeClip();
+    const props = { clip, size: 100, onPress: jest.fn(), onLongPress: jest.fn() };
+    const { getByTestId, rerender } = await render(
+      <ClipGridThumbnail {...props} selectionMode={false} selected={false} />,
+    );
+    await flushThumbnailEffect();
+    expect(getByTestId(`clip-${clip.id}`).props.accessibilityLabel).toBe('Abrir vídeo');
+
+    await rerender(<ClipGridThumbnail {...props} selectionMode selected={false} />);
+    expect(getByTestId(`clip-${clip.id}`).props.accessibilityLabel).toBe('Não selecionado');
+
+    await rerender(<ClipGridThumbnail {...props} selectionMode selected />);
+    expect(getByTestId(`clip-${clip.id}`).props.accessibilityLabel).toBe('Selecionado');
+  });
+
+  it('keeps the placeholder when no thumbnail can be generated', async () => {
+    const clip = makeClip();
+    const { queryByTestId } = await render(
+      <ClipGridThumbnail
+        clip={clip}
+        size={100}
+        selectionMode={false}
+        selected={false}
+        onPress={jest.fn()}
+        onLongPress={jest.fn()}
+      />,
+    );
+
+    await flushThumbnailEffect();
+    expect(queryByTestId(`clip-${clip.id}-image`)).toBeNull();
+  });
+
+  it('sizes the cell to the given grid size', async () => {
+    const clip = makeClip();
+    const { getByTestId } = await render(
+      <ClipGridThumbnail
+        clip={clip}
+        size={123}
+        selectionMode={false}
+        selected={false}
+        onPress={jest.fn()}
+        onLongPress={jest.fn()}
+      />,
+    );
+
+    expect(getByTestId(`clip-${clip.id}`)).toHaveStyle({ width: 123, height: 123 });
+    await flushThumbnailEffect();
+  });
+
+  it('ignores a thumbnail that resolves after the cell was unmounted (scrolled away)', async () => {
+    let resolveThumb: (uri: string) => void = () => undefined;
+    mockedGetClipThumbnail.mockReturnValue(
+      new Promise<string>(resolve => {
+        resolveThumb = resolve;
+      }),
+    );
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { unmount } = await render(
+      <ClipGridThumbnail
+        clip={makeClip()}
+        size={100}
+        selectionMode={false}
+        selected={false}
+        onPress={jest.fn()}
+        onLongPress={jest.fn()}
+      />,
+    );
+
+    await unmount();
+    await act(async () => {
+      resolveThumb('file:///late.jpg');
+    });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

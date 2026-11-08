@@ -27,4 +27,19 @@ class PreviewTargetIncludedTest {
         assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = true, isRunning = false))
         assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = false, isRunning = false))
     }
+
+    @Test
+    fun `pocket mode drops the preview target in the foreground`() {
+        assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = false, isPocketMode = true, isRunning = true))
+    }
+
+    @Test
+    fun `preview only comes back once neither background nor pocket mode is active`() {
+        assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = true, isPocketMode = true, isRunning = true))
+        // Exiting pocket mode while still backgrounded must not re-add it...
+        assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = true, isPocketMode = false, isRunning = true))
+        // ...nor foregrounding while still in pocket mode.
+        assertFalse(CameraEncoderController.previewTargetIncluded(isBackgroundMode = false, isPocketMode = true, isRunning = true))
+        assertTrue(CameraEncoderController.previewTargetIncluded(isBackgroundMode = false, isPocketMode = false, isRunning = true))
+    }
 }

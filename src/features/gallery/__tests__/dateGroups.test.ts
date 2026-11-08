@@ -60,3 +60,61 @@ describe('buildGalleryListItems', () => {
     expect(buildGalleryListItems([], 2, NOW)).toEqual([]);
   });
 });
+
+describe('dateGroups defaults to the current time', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('dateGroupTitle uses Date.now() when no reference time is passed', () => {
+    expect(dateGroupTitle(new Date(2026, 6, 15, 1, 0).getTime())).toBe('Hoje');
+    expect(dateGroupTitle(new Date(2026, 6, 14, 1, 0).getTime())).toBe('Ontem');
+  });
+
+  it('buildGalleryListItems uses Date.now() when no reference time is passed', () => {
+    const items = buildGalleryListItems(
+      [makeClip('a', new Date(2026, 6, 15, 9, 0).getTime())],
+      3,
+    );
+
+    expect(items[0]).toMatchObject({ type: 'header', title: 'Hoje' });
+  });
+});
+
+describe('dateGroupTitle edge cases', () => {
+  it('treats the last day of the previous month as "Ontem" on the 1st', () => {
+    const firstOfAugust = new Date(2026, 7, 1, 9, 0).getTime();
+    const lastOfJuly = new Date(2026, 6, 31, 22, 0).getTime();
+
+    expect(dateGroupTitle(lastOfJuly, firstOfAugust)).toBe('Ontem');
+  });
+
+  it('does not call the same day/month of a different year "Hoje"', () => {
+    const lastYear = new Date(2025, 6, 15, 12, 0).getTime();
+
+    expect(dateGroupTitle(lastYear, NOW)).toBe('15 de julho');
+  });
+
+  it('uses the correct Portuguese month names at both ends of the year', () => {
+    expect(dateGroupTitle(new Date(2026, 0, 3).getTime(), NOW)).toBe('3 de janeiro');
+    expect(dateGroupTitle(new Date(2025, 11, 25).getTime(), NOW)).toBe('25 de dezembro');
+  });
+});
+
+describe('buildGalleryListItems row keys', () => {
+  it('produces unique keys for every header and row', () => {
+    const clips = Array.from({ length: 7 }, (_, i) =>
+      makeClip(`c${i}`, new Date(2026, 6, 15 - Math.floor(i / 3), 10, 0).getTime()),
+    );
+
+    const items = buildGalleryListItems(clips, 2, NOW);
+    const keys = items.map(i => i.key);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
