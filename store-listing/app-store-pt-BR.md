@@ -16,6 +16,27 @@ O momento já foi salvo
 ```
 (22 caracteres)
 
+## Texto promocional (máx. 170 caracteres)
+
+Pode ser trocado a qualquer momento no App Store Connect, sem enviar nova versão para revisão.
+
+```
+Novo: grave pelo botão de volume ou controle Bluetooth, modo bolso pra poupar bateria e buffer ainda mais confiável. O momento que já passou vai junto no clipe.
+```
+(160 caracteres — versão 1.1.2)
+
+Alternativas para quando a novidade passar:
+
+```
+A câmera que nunca chega atrasada: o Peguei grava sem parar e salva os segundos antes do seu toque. Ideal pra pesca, trilha, surf e esportes ao ar livre.
+```
+(153 caracteres)
+
+```
+O peixe fisgou antes de você apertar gravar? Tudo bem: o Peguei já guardou os últimos segundos. Agora com modo bolso e gravação pelo botão de volume.
+```
+(149 caracteres)
+
 ## Palavras-chave (campo único, máx. 100 caracteres, separadas por vírgula)
 
 ```
