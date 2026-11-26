@@ -77,6 +77,7 @@ jest.mock('react-native-fs', () => ({
   mkdir: jest.fn().mockResolvedValue(undefined),
   moveFile: jest.fn().mockResolvedValue(undefined),
   stat: jest.fn().mockResolvedValue({ size: 0 }),
+  downloadFile: jest.fn(() => ({ jobId: 1, promise: Promise.resolve({ statusCode: 200, bytesWritten: 10 }) })),
 }));
 
 jest.mock('react-native-in-app-review', () => ({
@@ -86,3 +87,22 @@ jest.mock('react-native-in-app-review', () => ({
     RequestInAppReview: jest.fn().mockResolvedValue(true),
   },
 }));
+
+jest.mock('@react-native-firebase/remote-config', () => {
+  const values = {};
+  const rc = { defaultConfig: {}, settings: {} };
+  return {
+    __esModule: true,
+    __setValues: next => {
+      Object.keys(values).forEach(key => delete values[key]);
+      Object.assign(values, next);
+    },
+    getRemoteConfig: jest.fn(() => rc),
+    fetchAndActivate: jest.fn().mockResolvedValue(true),
+    getBoolean: jest.fn((_rc, key) => {
+      const value = key in values ? values[key] : rc.defaultConfig[key];
+      return value === true || value === 'true';
+    }),
+    getString: jest.fn((_rc, key) => String(key in values ? values[key] : rc.defaultConfig[key] ?? '')),
+  };
+});

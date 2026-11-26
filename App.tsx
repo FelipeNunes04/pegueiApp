@@ -20,6 +20,9 @@ import { SettingsScreen } from './src/features/settings/SettingsScreen';
 import { GalleryScreen } from './src/features/gallery/GalleryScreen';
 import { ClipPreviewScreen } from './src/features/gallery/ClipPreviewScreen';
 import { TipsScreen } from './src/features/tips/TipsScreen';
+import { ExportScreen } from './src/features/export/ExportScreen';
+import { initRemoteConfig } from './src/config/remoteConfig';
+import { prefetchSponsorAssets } from './src/features/export/sponsorAssets';
 import { useOnboardingStore } from './src/features/onboarding/store/onboardingStore';
 import { useProfileStore } from './src/features/onboarding/store/profileStore';
 import { usePermissions } from './src/features/permissions/hooks/usePermissions';
@@ -53,6 +56,10 @@ function App() {
     initAnalytics();
     track('app_opened');
     useProfileStore.getState().hydrate();
+    // Background only: the app never waits for Remote Config.
+    initRemoteConfig()
+      .then(() => prefetchSponsorAssets())
+      .catch(() => undefined);
   }, []);
 
   if (!hydrated || (hasCompletedOnboarding && !checked)) {
@@ -125,6 +132,11 @@ function App() {
             name="ClipPreview"
             component={ClipPreviewScreen}
             options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ExportClip"
+            component={ExportScreen}
+            options={{ title: 'Exportar vídeo' }}
           />
           <Stack.Screen
             name="Tips"

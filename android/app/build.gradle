@@ -131,5 +131,11 @@ dependencies {
         implementation jscFlavor
     }
 
+    // Video export (watermark, caption, 9:16). Same Media3 version as react-native-video.
+    def media3Version = "1.8.0"
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
+
     testImplementation("junit:junit:4.13.2")
 }

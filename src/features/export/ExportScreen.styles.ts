@@ -1,0 +1,51 @@
+import { StyleSheet } from 'react-native';
+import { colors } from '../../shared/theme/colors';
+import { typography } from '../../shared/theme/typography';
+
+export const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.backgroundDark },
+  content: { padding: 20, paddingBottom: 32 },
+  section: { ...typography.bodyStrong, color: colors.textDark, marginTop: 24, marginBottom: 4 },
+  hint: { ...typography.body, color: 'rgba(242,245,245,0.65)', lineHeight: 21 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
+  switchLabel: { ...typography.body, color: 'rgba(242,245,245,0.85)', flex: 1, marginRight: 12 },
+  row: { flexDirection: 'row', flexWrap: 'wrap' },
+  pill: {
+    ...typography.body,
+    color: colors.textDark,
+    backgroundColor: colors.surfaceDark,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginTop: 8,
+    marginRight: 8,
+    overflow: 'hidden',
+  },
+  pillActive: { backgroundColor: colors.accent, color: colors.textLight },
+  input: {
+    ...typography.body,
+    color: colors.textDark,
+    backgroundColor: colors.surfaceDark,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+  },
+  sponsorNote: {
+    ...typography.caption,
+    color: 'rgba(242,245,245,0.65)',
+    marginTop: 20,
+  },
+  error: { ...typography.body, color: colors.error, marginTop: 16 },
+  footer: { paddingHorizontal: 20, paddingBottom: 12 },
+  button: {
+    backgroundColor: colors.accent,
+    borderRadius: 24,
+    paddingVertical: 14,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  buttonDisabled: { opacity: 0.6 },
+  buttonLabel: { ...typography.bodyStrong, color: colors.textLight, marginLeft: 8 },
+});

@@ -8,6 +8,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DeleteConfirmModal } from '../../shared/components/DeleteConfirmModal';
 import {
   BackArrowIcon,
+  ExportIcon,
   PauseIcon,
   PlayIcon,
   ShareIcon,
@@ -112,6 +113,16 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
           <BackArrowIcon />
         </ScrimIconButton>
         <View style={styles.topActions}>
+          <ScrimIconButton
+            onPress={() => {
+              setPaused(true);
+              navigation.navigate('ExportClip', { clipId });
+            }}
+            accessibilityLabel="Exportar para redes sociais"
+            testID="preview-export"
+          >
+            <ExportIcon />
+          </ScrimIconButton>
           <ScrimIconButton
             onPress={handleShare}
             accessibilityLabel="Compartilhar"
