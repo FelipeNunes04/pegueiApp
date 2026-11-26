@@ -23,7 +23,9 @@ import {
   type GalleryListItem,
 } from './utils/dateGroups';
 import { deleteClip, listSavedClips } from '../../shared/utils/files';
-import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
+import { track } from '../../analytics';
+import { shareDestination } from './utils/shareDestination';
+import { maybePromptReview } from '../review/reviewPrompt';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import type { RootStackParamList, SavedClip } from '../../shared/types';
 import { styles } from './GalleryScreen.styles';
@@ -61,6 +63,11 @@ export function GalleryScreen({ navigation }: Props) {
     null,
   );
   const { width } = useWindowDimensions();
+
+  // Opening the gallery is a calm moment (not mid-catch) to ask for a review.
+  useEffect(() => {
+    maybePromptReview().catch(() => undefined);
+  }, []);
 
   const selectionMode = selectedIds.size > 0;
   const numColumns = width >= WIDE_LAYOUT_BREAKPOINT ? 3 : 2;
@@ -143,9 +150,11 @@ export function GalleryScreen({ navigation }: Props) {
     const count = selectedClips.length;
     const share =
       count === 1
-        ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4' })
-        : Share.open({ urls: selectedClips.map(toFilePath) });
-    share.then(() => logClipShared(count)).catch(() => undefined);
+        ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4', failOnCancel: false })
+        : Share.open({ urls: selectedClips.map(toFilePath), failOnCancel: false });
+    share
+      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: count }))
+      .catch(() => undefined);
   }, [selectedClips]);
 
   const handleDeleteSelected = useCallback(() => {
@@ -158,7 +167,7 @@ export function GalleryScreen({ navigation }: Props) {
     const toDelete = clips.filter(c => ids.includes(c.id));
     await Promise.all(toDelete.map(c => deleteClip(c.path)));
     ids.forEach(id => removeClip(id));
-    logClipDeleted(ids.length);
+    track('clip_deleted', { count: ids.length });
     setSelectedIds(new Set());
   }, [pendingDeleteIds, clips, removeClip]);
 

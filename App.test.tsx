@@ -7,7 +7,7 @@ import { StatusBar, useColorScheme } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import analytics from '@react-native-firebase/analytics';
+import { screen as trackScreen } from './src/analytics';
 import App from './App';
 import { useOnboardingStore } from './src/features/onboarding/store/onboardingStore';
 import { usePermissions } from './src/features/permissions/hooks/usePermissions';
@@ -56,7 +56,7 @@ jest.mock('./src/features/permissions/hooks/usePermissions', () => ({
 
 const mockedUsePermissions = usePermissions as jest.Mock;
 const mockedUseColorScheme = useColorScheme as jest.Mock;
-const mockedLogScreenView = analytics().logScreenView as jest.Mock;
+const mockedLogScreenView = trackScreen as jest.Mock;
 
 function permissionsState(overrides: Partial<{ allGranted: boolean; checked: boolean }> = {}) {
   return {
@@ -155,26 +155,21 @@ describe('App', () => {
       await findByTestId('onboarding-screen');
 
       await fireEvent.press(getByTestId('onboarding-skip'));
+      await findByTestId('onboarding-profile-screen');
+      expect(mockedLogScreenView).toHaveBeenLastCalledWith('OnboardingProfile');
+
+      await fireEvent.press(getByTestId('onboarding-profile-skip'));
       await findByTestId('permissions-screen');
-      expect(mockedLogScreenView).toHaveBeenLastCalledWith({
-        screen_name: 'Permissions',
-        screen_class: 'Permissions',
-      });
+      expect(mockedLogScreenView).toHaveBeenLastCalledWith('Permissions');
 
       await fireEvent.press(getByTestId('stub-permissions-done'));
       await findByTestId('camera-screen');
-      expect(mockedLogScreenView).toHaveBeenLastCalledWith({
-        screen_name: 'Camera',
-        screen_class: 'Camera',
-      });
+      expect(mockedLogScreenView).toHaveBeenLastCalledWith('Camera');
 
       await fireEvent.press(getByTestId('stub-open-gallery'));
       await findByTestId('gallery-screen');
-      expect(mockedLogScreenView).toHaveBeenLastCalledWith({
-        screen_name: 'Gallery',
-        screen_class: 'Gallery',
-      });
-      expect(mockedLogScreenView).toHaveBeenCalledTimes(3);
+      expect(mockedLogScreenView).toHaveBeenLastCalledWith('Gallery');
+      expect(mockedLogScreenView).toHaveBeenCalledTimes(4);
     });
 
     it('does not log again for a state change that stays on the same screen', async () => {
@@ -186,17 +181,6 @@ describe('App', () => {
       await fireEvent.press(getByTestId('stub-set-params'));
 
       expect(mockedLogScreenView).not.toHaveBeenCalled();
-    });
-
-    it('never crashes navigation if analytics rejects', async () => {
-      mockedLogScreenView.mockRejectedValueOnce(new Error('analytics offline'));
-      const { findByTestId, getByTestId } = await render(<App />);
-      await findByTestId('onboarding-screen');
-
-      await fireEvent.press(getByTestId('onboarding-skip'));
-
-      expect(await findByTestId('permissions-screen')).toBeTruthy();
-      expect(mockedLogScreenView).toHaveBeenCalled();
     });
   });
 

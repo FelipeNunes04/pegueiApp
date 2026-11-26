@@ -11,15 +11,20 @@ import {
   useNavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import analytics from '@react-native-firebase/analytics';
+import { initAnalytics, screen, track } from './src/analytics';
 import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
+import { OnboardingProfileScreen } from './src/features/onboarding/OnboardingProfileScreen';
 import { PermissionsScreen } from './src/features/permissions/PermissionsScreen';
 import { CameraScreen } from './src/features/camera/CameraScreen';
 import { SettingsScreen } from './src/features/settings/SettingsScreen';
 import { GalleryScreen } from './src/features/gallery/GalleryScreen';
 import { ClipPreviewScreen } from './src/features/gallery/ClipPreviewScreen';
 import { TipsScreen } from './src/features/tips/TipsScreen';
+import { ExportScreen } from './src/features/export/ExportScreen';
+import { initRemoteConfig } from './src/config/remoteConfig';
+import { prefetchSponsorAssets } from './src/features/export/sponsorAssets';
 import { useOnboardingStore } from './src/features/onboarding/store/onboardingStore';
+import { useProfileStore } from './src/features/onboarding/store/profileStore';
 import { usePermissions } from './src/features/permissions/hooks/usePermissions';
 import { colors } from './src/shared/theme/colors';
 import type { RootStackParamList } from './src/shared/types';
@@ -47,6 +52,16 @@ function App() {
     hydrate();
   }, [hydrate]);
 
+  useEffect(() => {
+    initAnalytics();
+    track('app_opened');
+    useProfileStore.getState().hydrate();
+    // Background only: the app never waits for Remote Config.
+    initRemoteConfig()
+      .then(() => prefetchSponsorAssets())
+      .catch(() => undefined);
+  }, []);
+
   if (!hydrated || (hasCompletedOnboarding && !checked)) {
     // Reading the "onboarding seen" flag from AsyncStorage is near-instant; a
     // bare background view avoids flashing the wrong initial route.
@@ -71,12 +86,7 @@ function App() {
           const previousRouteName = currentRouteNameRef.current;
           const currentRouteName = navigationRef.getCurrentRoute()?.name;
           if (currentRouteName && currentRouteName !== previousRouteName) {
-            analytics()
-              .logScreenView({
-                screen_name: currentRouteName,
-                screen_class: currentRouteName,
-              })
-              .catch(() => undefined);
+            screen(currentRouteName);
           }
           currentRouteNameRef.current = currentRouteName;
         }}
@@ -91,6 +101,11 @@ function App() {
           <Stack.Screen
             name="Onboarding"
             component={OnboardingScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="OnboardingProfile"
+            component={OnboardingProfileScreen}
             options={{ headerShown: false }}
           />
           <Stack.Screen
@@ -117,6 +132,11 @@ function App() {
             name="ClipPreview"
             component={ClipPreviewScreen}
             options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ExportClip"
+            component={ExportScreen}
+            options={{ title: 'Exportar vídeo' }}
           />
           <Stack.Screen
             name="Tips"

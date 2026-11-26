@@ -8,6 +8,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DeleteConfirmModal } from '../../shared/components/DeleteConfirmModal';
 import {
   BackArrowIcon,
+  ExportIcon,
   PauseIcon,
   PlayIcon,
   ShareIcon,
@@ -16,7 +17,8 @@ import {
 import { ScrimIconButton } from '../../shared/components/ScrimIconButton';
 import { formatDuration } from '../../shared/utils/duration';
 import { deleteClip } from '../../shared/utils/files';
-import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
+import { track } from '../../analytics';
+import { shareDestination } from './utils/shareDestination';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import { colors } from '../../shared/theme/colors';
 import type { RootStackParamList } from '../../shared/types';
@@ -54,8 +56,8 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
 
   const handleShare = useCallback(() => {
     if (!clip) return;
-    Share.open({ url: toFilePath(clip.path), type: 'video/mp4' })
-      .then(() => logClipShared(1))
+    Share.open({ url: toFilePath(clip.path), type: 'video/mp4', failOnCancel: false })
+      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: 1 }))
       .catch(() => undefined);
   }, [clip]);
 
@@ -64,7 +66,7 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
     setPendingDelete(false);
     await deleteClip(clip.path);
     removeClip(clip.id);
-    logClipDeleted(1);
+    track('clip_deleted', { count: 1 });
     navigation.goBack();
   }, [clip, removeClip, navigation]);
 
@@ -111,6 +113,16 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
           <BackArrowIcon />
         </ScrimIconButton>
         <View style={styles.topActions}>
+          <ScrimIconButton
+            onPress={() => {
+              setPaused(true);
+              navigation.navigate('ExportClip', { clipId });
+            }}
+            accessibilityLabel="Exportar para redes sociais"
+            testID="preview-export"
+          >
+            <ExportIcon />
+          </ScrimIconButton>
           <ScrimIconButton
             onPress={handleShare}
             accessibilityLabel="Compartilhar"

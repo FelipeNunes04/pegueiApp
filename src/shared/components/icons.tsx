@@ -136,3 +136,14 @@ export function PocketModeIcon({ size = 20, color = '#fff' }: IconProps) {
     </Svg>
   );
 }
+
+/** Vertical phone frame with a fish-tag line — "export for Reels/Status". */
+export function ExportIcon({ size = 22, color = '#fff' }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Rect x={7} y={3} width={10} height={18} rx={2} stroke={color} strokeWidth={1.8} fill="none" />
+      <Path d="M9.5 15.5 H14.5" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <Path d="M12 7 V12 M10 10 L12 12 L14 10" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </Svg>
+  );
+}

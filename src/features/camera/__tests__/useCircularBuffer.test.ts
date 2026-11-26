@@ -7,6 +7,9 @@ import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../settings/store/settingsStore';
 import { CircularBufferModule, circularBufferEvents } from '../native/CircularBufferModule';
+import { track } from '../../../analytics';
+
+const mockedTrack = track as jest.Mock;
 
 jest.mock('../native/CircularBufferModule', () => {
   const listeners: Record<string, ((event: unknown) => void)[]> = {};
@@ -997,6 +1000,73 @@ describe('useCircularBuffer', () => {
       const { result } = await renderHook(() => useCircularBuffer());
 
       expect(result.current.phase).toBe('idle');
+    });
+  });
+
+  describe('analytics', () => {
+    it('logs buffer_started with buffer length and lens, and buffer_stopped with minutes', async () => {
+      useSettingsStore.setState({ bufferSeconds: 45 });
+      useCameraStore.setState({ zoomFactor: 0.5 });
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      const { result } = await renderHook(() => useCircularBuffer());
+
+      await act(async () => {
+        await result.current.start();
+      });
+      expect(mockedTrack).toHaveBeenCalledWith('buffer_started', { buffer_s: 45, lente: '0.5x' });
+
+      now.mockReturnValue(1_000_000 + 90_000);
+      await act(async () => {
+        await result.current.stop();
+      });
+      expect(mockedTrack).toHaveBeenCalledWith('buffer_stopped', { duracao_min: 1.5 });
+      now.mockRestore();
+    });
+
+    it('does not log buffer_stopped for a buffer that never started', async () => {
+      const { result } = await renderHook(() => useCircularBuffer());
+      await act(async () => {
+        await result.current.stop();
+      });
+      expect(mockedTrack).not.toHaveBeenCalledWith('buffer_stopped', expect.anything());
+    });
+
+    it('logs capture_triggered and video_saved for a recording', async () => {
+      useSettingsStore.setState({ bufferSeconds: 30, videoQuality: '1080p', fps: 30 });
+      const { result } = await renderHook(() => useCircularBuffer());
+
+      await act(async () => {
+        await result.current.startRecording();
+      });
+      await act(async () => {
+        await result.current.stopRecording();
+      });
+
+      expect(mockedTrack).toHaveBeenCalledWith('capture_triggered', { buffer_s: 30 });
+      expect(mockedTrack).toHaveBeenCalledWith('video_saved', { duracao_s: 12, resolucao: '1080p', fps: 30, lente: '1x' });
+    });
+
+    it('logs capture_failed with the stage and native code, never a path', async () => {
+      const err = Object.assign(new Error('falhou em /var/mobile/clip.mp4'), { code: 'E_SAVE_FAILED' });
+      mockedModule.stopManualRecording.mockRejectedValueOnce(err);
+      mockedModule.startManualRecording.mockRejectedValueOnce(new Error('sem câmera em /dev/x'));
+      const { result } = await renderHook(() => useCircularBuffer());
+
+      await act(async () => {
+        await result.current.startRecording();
+      });
+      await act(async () => {
+        await result.current.stopRecording();
+      });
+
+      expect(mockedTrack).toHaveBeenCalledWith('capture_failed', { erro: 'record_start:sem câmera em <path>' });
+      expect(mockedTrack).toHaveBeenCalledWith('capture_failed', { erro: 'record_stop:E_SAVE_FAILED' });
+    });
+
+    it('logs capture_failed for an async native error event', async () => {
+      await renderHook(() => useCircularBuffer());
+      act(() => emit('CircularBufferError', { code: 'E_CAMERA_BUSY', message: 'Câmera em uso' }));
+      expect(mockedTrack).toHaveBeenCalledWith('capture_failed', { erro: 'native:E_CAMERA_BUSY' });
     });
   });
 });

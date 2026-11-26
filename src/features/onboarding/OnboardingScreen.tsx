@@ -17,10 +17,7 @@ import {
   VersatilityIllustration,
   WelcomeIllustration,
 } from './OnboardingIllustrations';
-import {
-  logOnboardingCompleted,
-  logOnboardingSkipped,
-} from '../../shared/utils/analytics';
+import { track } from '../../analytics';
 import type { RootStackParamList } from '../../shared/types';
 import { styles } from './OnboardingScreen.styles';
 
@@ -71,11 +68,10 @@ export function OnboardingScreen({ navigation }: Props) {
   const finish = (source: 'completed' | 'skipped') => {
     completeOnboarding();
     if (source === 'skipped') {
-      logOnboardingSkipped();
-    } else {
-      logOnboardingCompleted();
+      track('onboarding_skipped');
     }
-    navigation.replace('Permissions');
+    // onboarding_completed is sent by the optional profile step that follows.
+    navigation.replace('OnboardingProfile');
   };
 
   const goNext = () => {

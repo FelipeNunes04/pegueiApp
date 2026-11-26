@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
-import analytics from '@react-native-firebase/analytics';
+import { track } from '../../../analytics';
 import { ClipPreviewScreen } from '../ClipPreviewScreen';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import type { SavedClip } from '../../../shared/types';
@@ -23,7 +23,7 @@ jest.mock('react-native-video', () => {
 
 const mockedRNFS = RNFS as jest.Mocked<typeof RNFS>;
 const mockedShare = Share as jest.Mocked<typeof Share>;
-const mockedLogEvent = analytics().logEvent as jest.Mock;
+const mockedTrack = track as jest.Mock;
 
 const goBackMock = jest.fn();
 const fakeNavigation = { goBack: goBackMock } as never;
@@ -96,7 +96,7 @@ describe('ClipPreviewScreen', () => {
     expect(mockedRNFS.unlink).toHaveBeenCalledWith('/clips/clip_1_d12000.mp4');
     expect(useRecordingStore.getState().clips).toHaveLength(0);
     expect(goBackMock).toHaveBeenCalled();
-    expect(mockedLogEvent).toHaveBeenCalledWith('clip_deleted', { count: 1 });
+    expect(mockedTrack).toHaveBeenCalledWith('clip_deleted', { count: 1 });
   });
 
   it('sharing opens the native share sheet with the clip file and logs it', async () => {
@@ -110,7 +110,7 @@ describe('ClipPreviewScreen', () => {
     expect(mockedShare.open).toHaveBeenCalledWith(
       expect.objectContaining({ url: 'file:///clips/clip_1_d12000.mp4', type: 'video/mp4' }),
     );
-    await waitFor(() => expect(mockedLogEvent).toHaveBeenCalledWith('clip_shared', { count: 1 }));
+    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1 }));
   });
 
   const renderPreview = (clipId = 'clip_1') =>
@@ -235,7 +235,7 @@ describe('ClipPreviewScreen', () => {
     });
 
     expect(mockedShare.open).toHaveBeenCalled();
-    expect(mockedLogEvent).not.toHaveBeenCalledWith('clip_shared', expect.anything());
+    expect(mockedTrack).not.toHaveBeenCalledWith('video_shared', expect.anything());
   });
 
   it('bails out to the gallery if the clip is deleted elsewhere while being viewed', async () => {

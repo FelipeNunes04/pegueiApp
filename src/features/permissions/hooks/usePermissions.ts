@@ -8,7 +8,7 @@ import {
   type Permission,
 } from 'react-native-permissions';
 import type { PermissionKey, PermissionStatus } from '../../../shared/types';
-import { logPermissionDenied } from '../../../shared/utils/analytics';
+import { track } from '../../../analytics';
 
 type PermissionMap = Record<PermissionKey, PermissionStatus>;
 
@@ -92,7 +92,7 @@ export function usePermissions() {
     const status = toStatus(result);
     setStatuses(prev => ({ ...prev, [key]: status }));
     if (status === 'denied' || status === 'blocked') {
-      logPermissionDenied(key, status);
+      track('permission_denied', { permission: key, status });
     }
     return status;
   }, []);

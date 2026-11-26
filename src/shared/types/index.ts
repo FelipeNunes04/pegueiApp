@@ -113,10 +113,12 @@ export interface SaveClipResult {
 
 export type RootStackParamList = {
   Onboarding: undefined;
+  OnboardingProfile: undefined;
   Permissions: undefined;
   Camera: undefined;
   Settings: undefined;
   Gallery: undefined;
   ClipPreview: { clipId: string };
+  ExportClip: { clipId: string };
   Tips: undefined;
 };

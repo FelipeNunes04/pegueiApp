@@ -1,12 +1,12 @@
 import { Platform } from 'react-native';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { check, PERMISSIONS, request, RESULTS } from 'react-native-permissions';
-import analytics from '@react-native-firebase/analytics';
+import { track } from '../../../analytics';
 import { usePermissions } from '../hooks/usePermissions';
 
 const mockedCheck = check as jest.Mock;
 const mockedRequest = request as jest.Mock;
-const mockedLogEvent = analytics().logEvent as jest.Mock;
+const mockedTrack = track as jest.Mock;
 
 describe('usePermissions', () => {
   const originalOS = Platform.OS;
@@ -14,7 +14,7 @@ describe('usePermissions', () => {
   beforeEach(() => {
     mockedCheck.mockReset();
     mockedRequest.mockReset();
-    mockedLogEvent.mockClear();
+    mockedTrack.mockClear();
   });
 
   afterEach(() => {
@@ -59,7 +59,7 @@ describe('usePermissions', () => {
     });
 
     expect(result.current.statuses.camera).toBe('granted');
-    expect(mockedLogEvent).not.toHaveBeenCalledWith('permission_denied', expect.anything());
+    expect(mockedTrack).not.toHaveBeenCalledWith('permission_denied', expect.anything());
   });
 
   it('logs permission_denied when a request comes back denied', async () => {
@@ -73,7 +73,7 @@ describe('usePermissions', () => {
       await result.current.requestPermission('camera');
     });
 
-    expect(mockedLogEvent).toHaveBeenCalledWith('permission_denied', { permission: 'camera', status: 'blocked' });
+    expect(mockedTrack).toHaveBeenCalledWith('permission_denied', { permission: 'camera', status: 'blocked' });
   });
 
   describe.each([
@@ -163,7 +163,7 @@ describe('usePermissions', () => {
     });
 
     expect(status).toBe('denied');
-    expect(mockedLogEvent).toHaveBeenCalledWith('permission_denied', { permission: 'microphone', status: 'denied' });
+    expect(mockedTrack).toHaveBeenCalledWith('permission_denied', { permission: 'microphone', status: 'denied' });
   });
 
   describe('on a platform with no runtime permissions', () => {

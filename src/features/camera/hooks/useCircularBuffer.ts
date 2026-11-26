@@ -13,7 +13,9 @@ import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
 import { encodeClipFilename } from '../../../shared/utils/files';
-import { logClipSaved } from '../../../shared/utils/analytics';
+import { track } from '../../../analytics';
+import { recordVideoSaved } from '../../review/reviewPrompt';
+import { captureErrorLabel, currentCaptureContext, lensForZoom, minutesSince } from '../utils/captureAnalytics';
 import { resolveSupportedFps, resolveSupportedQuality } from '../../../shared/utils/captureCapabilities';
 import { VIDEO_QUALITY_PRESETS, type RecordingPhase, type SavedClip } from '../../../shared/types';
 
@@ -114,6 +116,12 @@ function isNoRecordingInProgress(err: unknown): boolean {
   return err instanceof Error && /nenhuma gravação em andamento|no recording in progress/i.test(err.message);
 }
 
+function logVideoSaved(durationSeconds: number) {
+  const { resolucao, fps, lente } = currentCaptureContext();
+  track('video_saved', { duracao_s: Math.round(durationSeconds), resolucao, fps, lente });
+  recordVideoSaved().catch(() => undefined);
+}
+
 export function useCircularBuffer() {
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const videoQuality = useSettingsStore(s => s.videoQuality);
@@ -145,6 +153,13 @@ export function useCircularBuffer() {
   // The clip the finalized event already handled, in case an in-flight
   // stopManualRecording() also resolves with it.
   const finalizedPathRef = useRef<string | null>(null);
+  // When the running buffer started, for buffer_stopped's duration. Null while stopped.
+  const bufferStartedAtRef = useRef<number | null>(null);
+  const logBufferStopped = useCallback(() => {
+    if (bufferStartedAtRef.current === null) return;
+    track('buffer_stopped', { duracao_min: minutesSince(bufferStartedAtRef.current) });
+    bufferStartedAtRef.current = null;
+  }, []);
 
   // Errors that happen after startBuffering()'s promise already resolved
   // (camera becomes busy, session disconnected mid-buffer) have no pending
@@ -158,6 +173,7 @@ export function useCircularBuffer() {
     const subscription = circularBufferEvents.addListener(
       'CircularBufferError',
       (event: CircularBufferErrorEvent) => {
+        track('capture_failed', { erro: captureErrorLabel('native', event) });
         if (isMountedRef.current) {
           setError(event.message);
         }
@@ -182,13 +198,14 @@ export function useCircularBuffer() {
     const subscription = circularBufferEvents.addListener(
       'CircularBufferStoppedExternally',
       () => {
+        logBufferStopped();
         if (isMountedRef.current) {
           setPhase('idle');
         }
       },
     );
     return () => subscription.remove();
-  }, [setPhase]);
+  }, [setPhase, logBufferStopped]);
 
   // Native watchdog/thermal/interruption state (see the bridge contract in
   // docs/plans/2026-10-21-reliability-battery-triggers.md). Emitted only on
@@ -226,6 +243,7 @@ export function useCircularBuffer() {
       playStopFeedback();
 
       if (event.error || !event.path) {
+        track('capture_failed', { erro: captureErrorLabel('finalized', event.error ?? event.reason) });
         const current = useRecordingStore.getState().phase;
         setError(finalizedMessage(event.reason, 'Não foi possível salvar o vídeo.'));
         setPhase(phaseAfterFinalized(current, event.reason));
@@ -244,7 +262,7 @@ export function useCircularBuffer() {
         setNotice(finalizedMessage(event.reason, 'O vídeo foi salvo.'));
         setPhase(phaseAfterFinalized(useRecordingStore.getState().phase, event.reason));
       }
-      logClipSaved(durationSeconds);
+      logVideoSaved(durationSeconds);
     };
     // An older iOS binary doesn't declare this event, and subscribing to an
     // undeclared one can throw (see the Android-only listener above). This
@@ -306,12 +324,18 @@ export function useCircularBuffer() {
         height: preset.height,
         fps: resolvedFps,
       });
+      if (generation === lifecycleGenerationRef.current) {
+        logBufferStopped();
+        bufferStartedAtRef.current = Date.now();
+        track('buffer_started', { buffer_s: bufferSeconds, lente: lensForZoom(useCameraStore.getState().zoomFactor) });
+      }
     } catch (err) {
+      track('capture_failed', { erro: captureErrorLabel('buffer_start', err) });
       if (isMountedRef.current && generation === lifecycleGenerationRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
     }
-  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError, setBufferHealth]);
+  }, [bufferSeconds, videoQuality, fps, setVideoQuality, setFps, loadCaptureCapabilities, setPhase, setError, setBufferHealth, logBufferStopped]);
 
   // Neither platform can keep the actual Camera2/AVCaptureSession alive once
   // the OS backgrounds the app (Android: revoked outright without a
@@ -352,6 +376,7 @@ export function useCircularBuffer() {
 
   const stop = useCallback(async () => {
     const generation = ++lifecycleGenerationRef.current;
+    logBufferStopped();
     try {
       await CircularBufferModule.stopBuffering();
     } finally {
@@ -360,12 +385,13 @@ export function useCircularBuffer() {
         setPhase('idle');
       }
     }
-  }, [setPhase, setBufferHealth]);
+  }, [setPhase, setBufferHealth, logBufferStopped]);
 
   const startRecording = useCallback(async () => {
     try {
       await CircularBufferModule.startManualRecording();
       recordingActiveRef.current = true;
+      track('capture_triggered', { buffer_s: useSettingsStore.getState().bufferSeconds });
       if (isMountedRef.current) {
         setPhase('recording');
         playStartFeedback();
@@ -392,11 +418,13 @@ export function useCircularBuffer() {
           try {
             await CircularBufferModule.startManualRecording();
             recordingActiveRef.current = true;
+            track('capture_triggered', { buffer_s: useSettingsStore.getState().bufferSeconds });
             if (isMountedRef.current) {
               setPhase('recording');
               playStartFeedback();
             }
           } catch (retryErr) {
+            track('capture_failed', { erro: captureErrorLabel('record_start', retryErr) });
             if (isMountedRef.current) {
               setError(retryErr instanceof Error ? retryErr.message : 'Não foi possível iniciar a gravação.');
             }
@@ -404,6 +432,7 @@ export function useCircularBuffer() {
           return;
         }
       }
+      track('capture_failed', { erro: captureErrorLabel('record_start', err) });
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar a gravação.');
       }
@@ -435,7 +464,7 @@ export function useCircularBuffer() {
         addClip(clip);
         setPhase('buffering');
       }
-      logClipSaved(result.durationSeconds);
+      logVideoSaved(result.durationSeconds);
       return clip;
     } catch (err) {
       // Native already ended this recording on its own: not a failed save.
@@ -450,6 +479,7 @@ export function useCircularBuffer() {
         return null;
       }
       recordingActiveRef.current = false;
+      track('capture_failed', { erro: captureErrorLabel('record_stop', err) });
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível salvar o clipe.');
         // The native buffer keeps running regardless of whether this one

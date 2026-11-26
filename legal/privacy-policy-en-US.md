@@ -1,6 +1,6 @@
 # Privacy Policy — Peguei
 
-**Last updated:** July 16, 2026
+**Last updated:** November 26, 2026
 
 This Privacy Policy describes how the **Peguei** app ("the App") handles user information.
 
@@ -25,13 +25,21 @@ Peguei is designed to work **entirely on your device**, without relying on a ser
 
 ## 2.1 Analytics
 
-The App uses **Firebase Analytics** (a Google service) to understand, in aggregate, which screens and features are used — this helps us prioritize improvements and, in the future, support conversations with partners. What is collected:
+The App uses **Firebase Analytics** (a Google service) to understand, in aggregate, how the App is used. This helps us prioritize improvements and show partners and sponsors aggregate usage numbers (for example, how many videos carrying a sponsor's watermark were exported). What is collected:
 
-- **Screen views** (e.g., which screen of the App was opened).
-- **Usage events**: a clip was saved (with its duration, not the video content) and whether the donation Pix key was copied.
-- Standard Firebase technical identifiers (app install ID, device model, OS version) — we do not collect name, email, phone number, or any advertising identifier (Ad ID).
+- **Screen views** (which screen of the App was opened).
+- **Usage events**, never the video content: buffer started and stopped (duration and lens), recording started, video saved (duration, resolution, frame rate and lens), recording failures (error code, no file names), video exported (with or without watermark and caption), which app a video was shared to (WhatsApp, Instagram, TikTok, YouTube, Facebook or other), review prompt shown, and whether the donation Pix key was copied.
+- **Optional onboarding answers**: kind of fishing and Brazilian state. You can skip this step.
+- **Exported video caption**: the species name you type and whether you entered a weight (the weight value itself is not sent).
+- Standard Firebase technical identifiers (app install ID, device model, OS version and app version). We do not collect name, email, phone number, device location or the advertising identifier (Ad ID).
 
-This data is processed by Google as a processor, under [Google's Privacy Policy](https://policies.google.com/privacy) and [Firebase's Terms](https://firebase.google.com/terms). No video, audio, or images are ever sent — only the events and metadata described above.
+You can turn this off at any time in **Settings → Privacy → Send usage data**. The choice is stored only on your device.
+
+This data is processed by Google as a processor, under [Google's Privacy Policy](https://policies.google.com/privacy) and [Firebase's Terms](https://firebase.google.com/terms). No video, audio or images are ever sent, only the events and metadata described above.
+
+## 2.2 Sponsorship
+
+When a sponsor is active, the App downloads the sponsor's brand image (via Firebase Remote Config and an https address) and applies it **on your device** to the videos you export. Your videos are never sent to the sponsor or to us.
 
 ## 4. Where your data is stored
 

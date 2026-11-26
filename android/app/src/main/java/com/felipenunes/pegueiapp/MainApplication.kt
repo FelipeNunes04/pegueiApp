@@ -8,8 +8,10 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+import com.felipenunes.pegueiapp.analytics.PegueiAnalyticsPackage
 import com.felipenunes.pegueiapp.circularbuffer.CameraEncoderController
 import com.felipenunes.pegueiapp.circularbuffer.CircularBufferPackage
+import com.felipenunes.pegueiapp.export.PegueiVideoExportPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -19,6 +21,8 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(CircularBufferPackage())
+          add(PegueiAnalyticsPackage())
+          add(PegueiVideoExportPackage())
         },
     )
   }
