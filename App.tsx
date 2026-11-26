@@ -11,7 +11,7 @@ import {
   useNavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import analytics from '@react-native-firebase/analytics';
+import { initAnalytics, screen, track } from './src/analytics';
 import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
 import { PermissionsScreen } from './src/features/permissions/PermissionsScreen';
 import { CameraScreen } from './src/features/camera/CameraScreen';
@@ -47,6 +47,11 @@ function App() {
     hydrate();
   }, [hydrate]);
 
+  useEffect(() => {
+    initAnalytics();
+    track('app_opened');
+  }, []);
+
   if (!hydrated || (hasCompletedOnboarding && !checked)) {
     // Reading the "onboarding seen" flag from AsyncStorage is near-instant; a
     // bare background view avoids flashing the wrong initial route.
@@ -71,12 +76,7 @@ function App() {
           const previousRouteName = currentRouteNameRef.current;
           const currentRouteName = navigationRef.getCurrentRoute()?.name;
           if (currentRouteName && currentRouteName !== previousRouteName) {
-            analytics()
-              .logScreenView({
-                screen_name: currentRouteName,
-                screen_class: currentRouteName,
-              })
-              .catch(() => undefined);
+            screen(currentRouteName);
           }
           currentRouteNameRef.current = currentRouteName;
         }}

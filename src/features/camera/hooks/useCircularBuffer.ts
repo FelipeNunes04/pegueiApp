@@ -13,7 +13,8 @@ import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
 import { encodeClipFilename } from '../../../shared/utils/files';
-import { logClipSaved } from '../../../shared/utils/analytics';
+import { track } from '../../../analytics';
+import { currentCaptureContext } from '../utils/captureAnalytics';
 import { resolveSupportedFps, resolveSupportedQuality } from '../../../shared/utils/captureCapabilities';
 import { VIDEO_QUALITY_PRESETS, type RecordingPhase, type SavedClip } from '../../../shared/types';
 
@@ -112,6 +113,11 @@ function phaseAfterFinalized(
 // when it already ended the recording on its own.
 function isNoRecordingInProgress(err: unknown): boolean {
   return err instanceof Error && /nenhuma gravação em andamento|no recording in progress/i.test(err.message);
+}
+
+function logVideoSaved(durationSeconds: number) {
+  const { resolucao, fps, lente } = currentCaptureContext();
+  track('video_saved', { duracao_s: Math.round(durationSeconds), resolucao, fps, lente });
 }
 
 export function useCircularBuffer() {
@@ -244,7 +250,7 @@ export function useCircularBuffer() {
         setNotice(finalizedMessage(event.reason, 'O vídeo foi salvo.'));
         setPhase(phaseAfterFinalized(useRecordingStore.getState().phase, event.reason));
       }
-      logClipSaved(durationSeconds);
+      logVideoSaved(durationSeconds);
     };
     // An older iOS binary doesn't declare this event, and subscribing to an
     // undeclared one can throw (see the Android-only listener above). This
@@ -435,7 +441,7 @@ export function useCircularBuffer() {
         addClip(clip);
         setPhase('buffering');
       }
-      logClipSaved(result.durationSeconds);
+      logVideoSaved(result.durationSeconds);
       return clip;
     } catch (err) {
       // Native already ended this recording on its own: not a failed save.

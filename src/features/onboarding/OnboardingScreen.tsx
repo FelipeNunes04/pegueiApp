@@ -17,10 +17,7 @@ import {
   VersatilityIllustration,
   WelcomeIllustration,
 } from './OnboardingIllustrations';
-import {
-  logOnboardingCompleted,
-  logOnboardingSkipped,
-} from '../../shared/utils/analytics';
+import { track } from '../../analytics';
 import type { RootStackParamList } from '../../shared/types';
 import { styles } from './OnboardingScreen.styles';
 
@@ -71,9 +68,9 @@ export function OnboardingScreen({ navigation }: Props) {
   const finish = (source: 'completed' | 'skipped') => {
     completeOnboarding();
     if (source === 'skipped') {
-      logOnboardingSkipped();
+      track('onboarding_skipped');
     } else {
-      logOnboardingCompleted();
+      track('onboarding_completed', { tipo_pesca: 'nao_informado', estado: 'nao_informado' });
     }
     navigation.replace('Permissions');
   };

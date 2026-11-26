@@ -16,7 +16,7 @@ import {
 import { useSettingsStore } from './store/settingsStore';
 import { useCameraStore } from '../camera/store/cameraStore';
 import { isFpsSupported, isQualitySupported } from '../../shared/utils/captureCapabilities';
-import { logDonationPixCopied } from '../../shared/utils/analytics';
+import { setAnalyticsEnabled, track, useAnalyticsConsent } from '../../analytics';
 import { colors } from '../../shared/theme/colors';
 import { BatteryOptimizationCard } from '../permissions/components/BatteryOptimizationCard';
 import { styles } from './SettingsScreen.styles';
@@ -72,6 +72,26 @@ function SettingsBackButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+function PrivacySection() {
+  const analyticsEnabled = useAnalyticsConsent(s => s.enabled);
+  return (
+    <>
+      <Text style={styles.section}>Privacidade</Text>
+      <Text style={styles.sectionHint}>
+        Dados de uso anônimos (quais recursos são usados, falhas, para onde os
+        vídeos são compartilhados) ajudam a melhorar o app. Nunca enviamos seus
+        vídeos nem sua localização.
+      </Text>
+      <SettingSwitch
+        label="Enviar dados de uso"
+        value={analyticsEnabled}
+        onValueChange={setAnalyticsEnabled}
+        testID="analytics-switch"
+      />
+    </>
+  );
+}
+
 // Pix key (e-mail) for optional donations -- e-mail keys don't expose a
 // government ID, unlike a CPF key (see conversation 2026-07-15).
 const PIX_KEY = 'felipennunes04@icloud.com';
@@ -86,7 +106,7 @@ function DonationSection() {
 
   const handleCopy = () => {
     Clipboard.setString(PIX_KEY);
-    logDonationPixCopied();
+    track('donation_pix_copied');
     setCopied(true);
     clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => setCopied(false), 2000);
@@ -291,6 +311,8 @@ export function SettingsScreen({ navigation }: Props) {
           </Text>
         ))}
       </View>
+
+      <PrivacySection />
 
       {Platform.OS === 'android' && (
         <View style={styles.batterySection}>

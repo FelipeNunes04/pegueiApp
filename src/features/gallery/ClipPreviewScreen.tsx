@@ -16,7 +16,8 @@ import {
 import { ScrimIconButton } from '../../shared/components/ScrimIconButton';
 import { formatDuration } from '../../shared/utils/duration';
 import { deleteClip } from '../../shared/utils/files';
-import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
+import { track } from '../../analytics';
+import { shareDestination } from './utils/shareDestination';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import { colors } from '../../shared/theme/colors';
 import type { RootStackParamList } from '../../shared/types';
@@ -55,7 +56,7 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
   const handleShare = useCallback(() => {
     if (!clip) return;
     Share.open({ url: toFilePath(clip.path), type: 'video/mp4' })
-      .then(() => logClipShared(1))
+      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: 1 }))
       .catch(() => undefined);
   }, [clip]);
 
@@ -64,7 +65,7 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
     setPendingDelete(false);
     await deleteClip(clip.path);
     removeClip(clip.id);
-    logClipDeleted(1);
+    track('clip_deleted', { count: 1 });
     navigation.goBack();
   }, [clip, removeClip, navigation]);
 

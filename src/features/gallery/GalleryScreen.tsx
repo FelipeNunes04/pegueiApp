@@ -23,7 +23,8 @@ import {
   type GalleryListItem,
 } from './utils/dateGroups';
 import { deleteClip, listSavedClips } from '../../shared/utils/files';
-import { logClipDeleted, logClipShared } from '../../shared/utils/analytics';
+import { track } from '../../analytics';
+import { shareDestination } from './utils/shareDestination';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import type { RootStackParamList, SavedClip } from '../../shared/types';
 import { styles } from './GalleryScreen.styles';
@@ -145,7 +146,9 @@ export function GalleryScreen({ navigation }: Props) {
       count === 1
         ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4' })
         : Share.open({ urls: selectedClips.map(toFilePath) });
-    share.then(() => logClipShared(count)).catch(() => undefined);
+    share
+      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: count }))
+      .catch(() => undefined);
   }, [selectedClips]);
 
   const handleDeleteSelected = useCallback(() => {
@@ -158,7 +161,7 @@ export function GalleryScreen({ navigation }: Props) {
     const toDelete = clips.filter(c => ids.includes(c.id));
     await Promise.all(toDelete.map(c => deleteClip(c.path)));
     ids.forEach(id => removeClip(id));
-    logClipDeleted(ids.length);
+    track('clip_deleted', { count: ids.length });
     setSelectedIds(new Set());
   }, [pendingDeleteIds, clips, removeClip]);
 

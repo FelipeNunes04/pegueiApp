@@ -2,13 +2,13 @@ import React from 'react';
 import { Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { act, fireEvent, render as baseRender, type RenderOptions } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import analytics from '@react-native-firebase/analytics';
+import { track } from '../../../analytics';
 import { OnboardingScreen } from '../OnboardingScreen';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 const replaceMock = jest.fn();
 const fakeNavigation = { replace: replaceMock } as never;
-const mockedLogEvent = analytics().logEvent as jest.Mock;
+const mockedTrack = track as jest.Mock;
 const STATUS_BAR_INSET = 59;
 const safeAreaMetrics = {
   frame: { x: 0, y: 0, width: 390, height: 844 },
@@ -46,7 +46,7 @@ describe('OnboardingScreen', () => {
 
     expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
     expect(replaceMock).toHaveBeenCalledWith('Permissions');
-    expect(mockedLogEvent).toHaveBeenCalledWith('onboarding_skipped');
+    expect(mockedTrack).toHaveBeenCalledWith('onboarding_skipped');
   });
 
   it('keeps "Pular" below the status bar', async () => {
@@ -127,8 +127,8 @@ describe('OnboardingScreen', () => {
       expect(scrollToSpy).not.toHaveBeenCalled();
       expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
       expect(replaceMock).toHaveBeenCalledWith('Permissions');
-      expect(mockedLogEvent).toHaveBeenCalledWith('onboarding_completed');
-      expect(mockedLogEvent).not.toHaveBeenCalledWith('onboarding_skipped');
+      expect(mockedTrack).toHaveBeenCalledWith('onboarding_completed', { tipo_pesca: 'nao_informado', estado: 'nao_informado' });
+      expect(mockedTrack).not.toHaveBeenCalledWith('onboarding_skipped');
     });
 
     it('swiping back from the last slide restores "Pular" and "Próximo"', async () => {

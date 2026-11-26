@@ -10,12 +10,28 @@ jest.mock('@react-native-clipboard/clipboard', () => ({
   getString: jest.fn().mockResolvedValue(''),
 }));
 
-jest.mock('@react-native-firebase/analytics', () => {
-  const mockAnalytics = {
-    logEvent: jest.fn().mockResolvedValue(undefined),
-    logScreenView: jest.fn().mockResolvedValue(undefined),
+jest.mock('@react-native-firebase/analytics', () => ({
+  __esModule: true,
+  getAnalytics: jest.fn(() => ({})),
+  logEvent: jest.fn().mockResolvedValue(undefined),
+  logScreenView: jest.fn().mockResolvedValue(undefined),
+  setAnalyticsCollectionEnabled: jest.fn().mockResolvedValue(undefined),
+  setUserId: jest.fn().mockResolvedValue(undefined),
+  setUserProperties: jest.fn().mockResolvedValue(undefined),
+}));
+
+// Screens are tested against track()/screen() calls, not a provider. The
+// analytics layer itself is tested with the real module (jest.unmock).
+jest.mock('./src/analytics/track', () => {
+  const actual = jest.requireActual('./src/analytics/track');
+  return {
+    ...actual,
+    track: jest.fn(),
+    screen: jest.fn(),
+    identify: jest.fn(),
+    setUserProperties: jest.fn(),
+    initAnalytics: jest.fn().mockResolvedValue(undefined),
   };
-  return { __esModule: true, default: () => mockAnalytics };
 });
 
 jest.mock('@react-native-firebase/app', () => ({}));

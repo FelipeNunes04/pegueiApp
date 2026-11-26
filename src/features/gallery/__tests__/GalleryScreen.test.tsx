@@ -3,14 +3,14 @@ import { Dimensions } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
-import analytics from '@react-native-firebase/analytics';
+import { track } from '../../../analytics';
 import { GalleryScreen } from '../GalleryScreen';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { CLIPS_DIR } from '../../../shared/utils/files';
 
 const mockedRNFS = RNFS as jest.Mocked<typeof RNFS>;
 const mockedShare = Share as jest.Mocked<typeof Share>;
-const mockedLogEvent = analytics().logEvent as jest.Mock;
+const mockedTrack = track as jest.Mock;
 
 const navigateMock = jest.fn();
 const goBackMock = jest.fn();
@@ -108,7 +108,7 @@ describe('GalleryScreen', () => {
     expect(mockedRNFS.unlink).toHaveBeenCalledWith(`${CLIPS_DIR}/clip_1000_d12000.mp4`);
     expect(queryByTestId('clip-clip_1000_d12000.mp4')).toBeNull();
     expect(queryByTestId('selection-toolbar')).toBeNull();
-    expect(mockedLogEvent).toHaveBeenCalledWith('clip_deleted', { count: 1 });
+    expect(mockedTrack).toHaveBeenCalledWith('clip_deleted', { count: 1 });
   });
 
   it('sharing selected clips opens the native share sheet and logs it', async () => {
@@ -122,7 +122,7 @@ describe('GalleryScreen', () => {
     await fireEvent.press(getByTestId('selection-share'));
 
     expect(mockedShare.open).toHaveBeenCalled();
-    await waitFor(() => expect(mockedLogEvent).toHaveBeenCalledWith('clip_shared', { count: 1 }));
+    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1 }));
   });
 
   describe('selection mode', () => {
@@ -214,7 +214,7 @@ describe('GalleryScreen', () => {
       expect(mockedShare.open).toHaveBeenCalledWith({
         urls: [`file://${CLIPS_DIR}/${A}`, `file://${CLIPS_DIR}/${C}`],
       });
-      await waitFor(() => expect(mockedLogEvent).toHaveBeenCalledWith('clip_shared', { count: 2 }));
+      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 2 }));
     });
 
     it('sharing a single clip uses a single file:// URL with the video MIME type', async () => {
@@ -240,7 +240,7 @@ describe('GalleryScreen', () => {
         await Promise.resolve();
       });
 
-      expect(mockedLogEvent).not.toHaveBeenCalledWith('clip_shared', expect.anything());
+      expect(mockedTrack).not.toHaveBeenCalledWith('video_shared', expect.anything());
       expect(getByTestId('selection-toolbar')).toBeTruthy();
     });
 
@@ -260,7 +260,7 @@ describe('GalleryScreen', () => {
       expect(queryByTestId(`clip-${A}`)).toBeNull();
       expect(queryByTestId(`clip-${C}`)).toBeNull();
       expect(getByTestId(`clip-${B}`)).toBeTruthy();
-      expect(mockedLogEvent).toHaveBeenCalledWith('clip_deleted', { count: 2 });
+      expect(mockedTrack).toHaveBeenCalledWith('clip_deleted', { count: 2 });
     });
 
     it('cancelling the delete keeps selection mode active', async () => {
