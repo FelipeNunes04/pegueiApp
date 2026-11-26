@@ -213,8 +213,19 @@ describe('GalleryScreen', () => {
 
       expect(mockedShare.open).toHaveBeenCalledWith({
         urls: [`file://${CLIPS_DIR}/${A}`, `file://${CLIPS_DIR}/${C}`],
+        failOnCancel: false,
       });
       await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 2 }));
+    });
+
+    it('logs a closed share sheet as cancelado', async () => {
+      mockedShare.open.mockResolvedValueOnce({ success: false, dismissedAction: true, message: '' } as never);
+      const { getByTestId } = await renderWithThreeClips();
+
+      await fireEvent(getByTestId(`clip-${B}`), 'longPress');
+      await fireEvent.press(getByTestId('selection-share'));
+
+      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'cancelado', quantidade: 1 }));
     });
 
     it('sharing a single clip uses a single file:// URL with the video MIME type', async () => {
@@ -227,6 +238,7 @@ describe('GalleryScreen', () => {
       expect(mockedShare.open).toHaveBeenCalledWith({
         url: `file://${CLIPS_DIR}/${B}`,
         type: 'video/mp4',
+        failOnCancel: false,
       });
     });
 
@@ -302,6 +314,7 @@ describe('GalleryScreen', () => {
     expect(mockedShare.open).toHaveBeenCalledWith({
       url: 'file:///clips/clip_1000_d12000.mp4',
       type: 'video/mp4',
+      failOnCancel: false,
     });
   });
 

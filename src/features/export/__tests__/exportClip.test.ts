@@ -89,7 +89,7 @@ describe('exportClip', () => {
   it('logs the share destination of the exported file', async () => {
     (Share.open as jest.Mock).mockResolvedValueOnce({ success: true, message: 'com.burbn.instagram.shareextension' });
     await shareExported('/mock/caches/exports/out.mp4');
-    expect(Share.open).toHaveBeenCalledWith({ url: 'file:///mock/caches/exports/out.mp4', type: 'video/mp4' });
+    expect(Share.open).toHaveBeenCalledWith({ url: 'file:///mock/caches/exports/out.mp4', type: 'video/mp4', failOnCancel: false });
     expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'instagram', quantidade: 1 });
   });
 

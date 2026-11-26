@@ -1,6 +1,6 @@
 # Política de Privacidade — Peguei
 
-**Última atualização:** 16 de julho de 2026
+**Última atualização:** 26 de novembro de 2026
 
 Esta Política de Privacidade descreve como o aplicativo **Peguei** ("o App") trata as informações dos seus usuários.
 
@@ -25,13 +25,21 @@ O Peguei foi projetado para funcionar **inteiramente no seu aparelho**, sem depe
 
 ## 2.1 Analytics
 
-O App usa o **Firebase Analytics** (serviço do Google) para entender, de forma agregada, quais telas e funções são usadas — isso nos ajuda a priorizar melhorias e, no futuro, embasar conversas com parceiros. O que é coletado:
+O App usa o **Firebase Analytics** (serviço do Google) para entender, de forma agregada, como o App é usado. Isso nos ajuda a priorizar melhorias e a mostrar a parceiros e patrocinadores números agregados de uso (por exemplo, quantos vídeos com a marca de um patrocinador foram exportados). O que é coletado:
 
-- **Visualizações de tela** (ex.: qual tela do App foi aberta).
-- **Eventos de uso**: um clipe foi salvo (com a duração, sem o conteúdo do vídeo) e se a chave Pix de doação foi copiada.
-- Identificadores técnicos padrão do Firebase (ID de instalação do App, modelo do aparelho, versão do sistema operacional) — não coletamos nome, e-mail, telefone ou qualquer identificador de publicidade (Ad ID).
+- **Visualizações de tela** (qual tela do App foi aberta).
+- **Eventos de uso**, sem o conteúdo dos vídeos: buffer ligado e desligado (duração e lente), gravação iniciada, vídeo salvo (duração, resolução, quadros por segundo e lente), falhas de gravação (código do erro, sem nomes de arquivo), vídeo exportado (com ou sem marca d'água e legenda), para qual app o vídeo foi compartilhado (WhatsApp, Instagram, TikTok, YouTube, Facebook ou outro), pedido de avaliação exibido e se a chave Pix de doação foi copiada.
+- **Respostas opcionais do início do App**: tipo de pesca e estado (UF). Você pode pular essa etapa.
+- **Legenda do vídeo exportado**: o nome da espécie que você digitar e se informou o peso (o valor do peso não é enviado).
+- Identificadores técnicos padrão do Firebase (ID de instalação do App, modelo do aparelho, versão do sistema operacional e versão do App). Não coletamos nome, e-mail, telefone, localização do aparelho nem o identificador de publicidade (Ad ID).
 
-Esses dados são processados pelo Google como operador, conforme a [Política de Privacidade do Google](https://policies.google.com/privacy) e os [Termos do Firebase](https://firebase.google.com/terms). Nenhum vídeo, áudio ou imagem é enviado — apenas os eventos e metadados descritos acima.
+Você pode desligar o envio a qualquer momento em **Configurações → Privacidade → Enviar dados de uso**. A escolha fica guardada só no seu aparelho.
+
+Esses dados são processados pelo Google como operador, conforme a [Política de Privacidade do Google](https://policies.google.com/privacy) e os [Termos do Firebase](https://firebase.google.com/terms). Nenhum vídeo, áudio ou imagem é enviado, apenas os eventos e metadados descritos acima.
+
+## 2.2 Patrocínio
+
+Quando há um patrocinador ativo, o App baixa a imagem da marca dele (pelo Firebase Remote Config e por um endereço https) e a aplica **no seu aparelho** ao vídeo que você exportar. Seus vídeos não são enviados ao patrocinador nem a nós.
 
 ## 4. Onde seus dados ficam armazenados
 

@@ -100,7 +100,7 @@ export async function exportClip(request: ExportRequest): Promise<ExportOutcome>
 export async function shareExported(path: string): Promise<void> {
   const url = path.startsWith('file://') ? path : `file://${path}`;
   try {
-    const result = await Share.open({ url, type: 'video/mp4' });
+    const result = await Share.open({ url, type: 'video/mp4', failOnCancel: false });
     track('video_shared', { destino: shareDestination(result), quantidade: 1 });
   } catch {
     // Share sheet closed or failed: nothing to log beyond the export.

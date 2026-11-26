@@ -56,7 +56,7 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
 
   const handleShare = useCallback(() => {
     if (!clip) return;
-    Share.open({ url: toFilePath(clip.path), type: 'video/mp4' })
+    Share.open({ url: toFilePath(clip.path), type: 'video/mp4', failOnCancel: false })
       .then(result => track('video_shared', { destino: shareDestination(result), quantidade: 1 }))
       .catch(() => undefined);
   }, [clip]);

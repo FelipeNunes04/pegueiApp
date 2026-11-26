@@ -150,8 +150,8 @@ export function GalleryScreen({ navigation }: Props) {
     const count = selectedClips.length;
     const share =
       count === 1
-        ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4' })
-        : Share.open({ urls: selectedClips.map(toFilePath) });
+        ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4', failOnCancel: false })
+        : Share.open({ urls: selectedClips.map(toFilePath), failOnCancel: false });
     share
       .then(result => track('video_shared', { destino: shareDestination(result), quantidade: count }))
       .catch(() => undefined);
