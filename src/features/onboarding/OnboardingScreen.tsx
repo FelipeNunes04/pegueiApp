@@ -69,10 +69,9 @@ export function OnboardingScreen({ navigation }: Props) {
     completeOnboarding();
     if (source === 'skipped') {
       track('onboarding_skipped');
-    } else {
-      track('onboarding_completed', { tipo_pesca: 'nao_informado', estado: 'nao_informado' });
     }
-    navigation.replace('Permissions');
+    // onboarding_completed is sent by the optional profile step that follows.
+    navigation.replace('OnboardingProfile');
   };
 
   const goNext = () => {

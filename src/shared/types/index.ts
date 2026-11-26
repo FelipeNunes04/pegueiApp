@@ -113,6 +113,7 @@ export interface SaveClipResult {
 
 export type RootStackParamList = {
   Onboarding: undefined;
+  OnboardingProfile: undefined;
   Permissions: undefined;
   Camera: undefined;
   Settings: undefined;

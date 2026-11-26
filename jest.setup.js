@@ -78,3 +78,11 @@ jest.mock('react-native-fs', () => ({
   moveFile: jest.fn().mockResolvedValue(undefined),
   stat: jest.fn().mockResolvedValue({ size: 0 }),
 }));
+
+jest.mock('react-native-in-app-review', () => ({
+  __esModule: true,
+  default: {
+    isAvailable: jest.fn(() => true),
+    RequestInAppReview: jest.fn().mockResolvedValue(true),
+  },
+}));

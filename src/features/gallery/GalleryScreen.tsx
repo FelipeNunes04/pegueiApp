@@ -25,6 +25,7 @@ import {
 import { deleteClip, listSavedClips } from '../../shared/utils/files';
 import { track } from '../../analytics';
 import { shareDestination } from './utils/shareDestination';
+import { maybePromptReview } from '../review/reviewPrompt';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import type { RootStackParamList, SavedClip } from '../../shared/types';
 import { styles } from './GalleryScreen.styles';
@@ -62,6 +63,11 @@ export function GalleryScreen({ navigation }: Props) {
     null,
   );
   const { width } = useWindowDimensions();
+
+  // Opening the gallery is a calm moment (not mid-catch) to ask for a review.
+  useEffect(() => {
+    maybePromptReview().catch(() => undefined);
+  }, []);
 
   const selectionMode = selectedIds.size > 0;
   const numColumns = width >= WIDE_LAYOUT_BREAKPOINT ? 3 : 2;

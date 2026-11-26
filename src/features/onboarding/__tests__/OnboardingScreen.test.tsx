@@ -37,7 +37,7 @@ describe('OnboardingScreen', () => {
     expect(getByTestId('onboarding-slide-welcome')).toBeTruthy();
   });
 
-  it('"Pular" completes onboarding and navigates straight to Permissions', async () => {
+  it('"Pular" completes onboarding and goes to the optional profile step', async () => {
     const { getByTestId } = await render(<OnboardingScreen navigation={fakeNavigation} route={{} as never} />);
 
     await act(async () => {
@@ -45,7 +45,7 @@ describe('OnboardingScreen', () => {
     });
 
     expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
-    expect(replaceMock).toHaveBeenCalledWith('Permissions');
+    expect(replaceMock).toHaveBeenCalledWith('OnboardingProfile');
     expect(mockedTrack).toHaveBeenCalledWith('onboarding_skipped');
   });
 
@@ -116,7 +116,7 @@ describe('OnboardingScreen', () => {
       expect(queryByText('Próximo')).toBeNull();
     });
 
-    it('"Continuar" on the last slide completes onboarding, logs it, and goes to Permissions', async () => {
+    it('"Continuar" on the last slide completes onboarding and goes to the profile step', async () => {
       const { getByTestId } = await render(
         <OnboardingScreen navigation={fakeNavigation} route={{} as never} />,
       );
@@ -126,8 +126,7 @@ describe('OnboardingScreen', () => {
 
       expect(scrollToSpy).not.toHaveBeenCalled();
       expect(useOnboardingStore.getState().hasCompletedOnboarding).toBe(true);
-      expect(replaceMock).toHaveBeenCalledWith('Permissions');
-      expect(mockedTrack).toHaveBeenCalledWith('onboarding_completed', { tipo_pesca: 'nao_informado', estado: 'nao_informado' });
+      expect(replaceMock).toHaveBeenCalledWith('OnboardingProfile');
       expect(mockedTrack).not.toHaveBeenCalledWith('onboarding_skipped');
     });
 

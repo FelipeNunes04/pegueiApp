@@ -13,6 +13,7 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { initAnalytics, screen, track } from './src/analytics';
 import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
+import { OnboardingProfileScreen } from './src/features/onboarding/OnboardingProfileScreen';
 import { PermissionsScreen } from './src/features/permissions/PermissionsScreen';
 import { CameraScreen } from './src/features/camera/CameraScreen';
 import { SettingsScreen } from './src/features/settings/SettingsScreen';
@@ -20,6 +21,7 @@ import { GalleryScreen } from './src/features/gallery/GalleryScreen';
 import { ClipPreviewScreen } from './src/features/gallery/ClipPreviewScreen';
 import { TipsScreen } from './src/features/tips/TipsScreen';
 import { useOnboardingStore } from './src/features/onboarding/store/onboardingStore';
+import { useProfileStore } from './src/features/onboarding/store/profileStore';
 import { usePermissions } from './src/features/permissions/hooks/usePermissions';
 import { colors } from './src/shared/theme/colors';
 import type { RootStackParamList } from './src/shared/types';
@@ -50,6 +52,7 @@ function App() {
   useEffect(() => {
     initAnalytics();
     track('app_opened');
+    useProfileStore.getState().hydrate();
   }, []);
 
   if (!hydrated || (hasCompletedOnboarding && !checked)) {
@@ -91,6 +94,11 @@ function App() {
           <Stack.Screen
             name="Onboarding"
             component={OnboardingScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="OnboardingProfile"
+            component={OnboardingProfileScreen}
             options={{ headerShown: false }}
           />
           <Stack.Screen

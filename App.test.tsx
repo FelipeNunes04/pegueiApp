@@ -155,6 +155,10 @@ describe('App', () => {
       await findByTestId('onboarding-screen');
 
       await fireEvent.press(getByTestId('onboarding-skip'));
+      await findByTestId('onboarding-profile-screen');
+      expect(mockedLogScreenView).toHaveBeenLastCalledWith('OnboardingProfile');
+
+      await fireEvent.press(getByTestId('onboarding-profile-skip'));
       await findByTestId('permissions-screen');
       expect(mockedLogScreenView).toHaveBeenLastCalledWith('Permissions');
 
@@ -165,7 +169,7 @@ describe('App', () => {
       await fireEvent.press(getByTestId('stub-open-gallery'));
       await findByTestId('gallery-screen');
       expect(mockedLogScreenView).toHaveBeenLastCalledWith('Gallery');
-      expect(mockedLogScreenView).toHaveBeenCalledTimes(3);
+      expect(mockedLogScreenView).toHaveBeenCalledTimes(4);
     });
 
     it('does not log again for a state change that stays on the same screen', async () => {

@@ -3059,6 +3059,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@react-native-firebase/remote-config@npm:^25.1.0":
+  version: 25.1.0
+  resolution: "@react-native-firebase/remote-config@npm:25.1.0"
+  dependencies:
+    react-native-fetch-api: ^3.0.0
+    text-encoding: ^0.7.0
+    web-streams-polyfill: ^4.2.0
+  peerDependencies:
+    "@react-native-firebase/analytics": 25.1.0
+    "@react-native-firebase/app": 25.1.0
+  checksum: 9ea052bc08674b61bc65ac1b4278bb6de1e68377b75a795154ed6115f23a49a03f49cfd1b0206f9145920707dd4e4c1b6d3e56f016328969fd025b562c8e034b
+  languageName: node
+  linkType: hard
+
 "@react-native/assets-registry@npm:0.86.0":
   version: 0.86.0
   resolution: "@react-native/assets-registry@npm:0.86.0"
@@ -3999,6 +4013,7 @@ __metadata:
     "@react-native-community/slider": ^5.2.0
     "@react-native-firebase/analytics": ^25.1.0
     "@react-native-firebase/app": ^25.1.0
+    "@react-native-firebase/remote-config": ^25.1.0
     "@react-native/babel-preset": 0.86.0
     "@react-native/eslint-config": 0.86.0
     "@react-native/jest-preset": 0.86.0
@@ -4019,6 +4034,7 @@ __metadata:
     react-native: 0.86.0
     react-native-create-thumbnail: ^2.2.0
     react-native-fs: ^2.20.0
+    react-native-in-app-review: ^4.4.2
     react-native-permissions: ^5.6.0
     react-native-safe-area-context: ^5.5.2
     react-native-screens: ^4.26.0
@@ -9481,6 +9497,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"p-defer@npm:^3.0.0":
+  version: 3.0.0
+  resolution: "p-defer@npm:3.0.0"
+  checksum: ac3b0976a1c76b67cca1a34e00f7299b0cc230891f820749686aa84f8947326bbe0f8e3b7d9ca511578ee06f0c1a6e0ff68c8e9c325eac455f09d99f91697161
+  languageName: node
+  linkType: hard
+
 "p-limit@npm:^2.2.0":
   version: 2.3.0
   resolution: "p-limit@npm:2.3.0"
@@ -9900,6 +9923,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"react-native-fetch-api@npm:^3.0.0":
+  version: 3.0.0
+  resolution: "react-native-fetch-api@npm:3.0.0"
+  dependencies:
+    p-defer: ^3.0.0
+  checksum: f10f435060551c470711ba0b3663e3d49c7701aae84ea645d66992d756b13e923fb5762b324d3583d85c1c0def4138b9cc3f686bab1c1bc10d3ad82dc7175c99
+  languageName: node
+  linkType: hard
+
 "react-native-fs@npm:^2.20.0":
   version: 2.20.0
   resolution: "react-native-fs@npm:2.20.0"
@@ -9913,6 +9945,13 @@ __metadata:
     react-native-windows:
       optional: true
   checksum: 0be9bb9a5c13b501d0a3006efc3aa5c0b5b211456ee04718297f4e522532f3527f1daa220bd67d3b82d819ed8fdab8f64b7d6e0d7b768c1fd1d8ec9122d94316
+  languageName: node
+  linkType: hard
+
+"react-native-in-app-review@npm:^4.4.2":
+  version: 4.4.2
+  resolution: "react-native-in-app-review@npm:4.4.2"
+  checksum: eebcea67efb504e0557e7eee8d92335973f6a84bb493a282bebf2cb11dca99b8765b13364618f7f7d539df92f8100713beb87041b04d2435092e1c6aad066623
   languageName: node
   linkType: hard
 
@@ -11112,6 +11151,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"text-encoding@npm:^0.7.0":
+  version: 0.7.0
+  resolution: "text-encoding@npm:0.7.0"
+  checksum: b6109a843fb1b8748b32e1ecd6df74d370f46c13ac136bcb6ca15db70209bb0b8ec1f296ebb4b0dd9961150e205dcc044b89f8cf7657f6faef78c7569a2a81bc
+  languageName: node
+  linkType: hard
+
 "text-hex@npm:1.0.x":
   version: 1.0.0
   resolution: "text-hex@npm:1.0.0"
@@ -11604,6 +11650,13 @@ __metadata:
   dependencies:
     defaults: ^1.0.3
   checksum: 814e9d1ddcc9798f7377ffa448a5a3892232b9275ebb30a41b529607691c0491de47cba426e917a4d08ded3ee7e9ba2f3fe32e62ee3cd9c7d3bafb7754bd553c
+  languageName: node
+  linkType: hard
+
+"web-streams-polyfill@npm:^4.2.0":
+  version: 4.5.1
+  resolution: "web-streams-polyfill@npm:4.5.1"
+  checksum: efb43050801aee73572fdd440c5c091ec42f401dae426922ecd21c23d88fe627030018e4c9f6fd4bcead6b5698445f3c7539cc8dbc357becb640a0cf2cef8549
   languageName: node
   linkType: hard
 
