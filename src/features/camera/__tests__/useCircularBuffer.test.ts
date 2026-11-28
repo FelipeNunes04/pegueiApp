@@ -1044,6 +1044,11 @@ describe('useCircularBuffer', () => {
 
       expect(mockedTrack).toHaveBeenCalledWith('capture_triggered', { buffer_s: 30 });
       expect(mockedTrack).toHaveBeenCalledWith('video_saved', { duracao_s: 12, resolucao: '1080p', fps: 30, lente: '1x' });
+      expect(mockedTrack).toHaveBeenCalledWith('capture_latency_measured', {
+        toque_ate_salvo_ms: expect.any(Number),
+        buffer_s: 30,
+        resolucao: '1080p',
+      });
     });
 
     it('logs capture_failed with the stage and native code, never a path', async () => {
@@ -1061,6 +1066,7 @@ describe('useCircularBuffer', () => {
 
       expect(mockedTrack).toHaveBeenCalledWith('capture_failed', { erro: 'record_start:sem câmera em <path>' });
       expect(mockedTrack).toHaveBeenCalledWith('capture_failed', { erro: 'record_stop:E_SAVE_FAILED' });
+      expect(mockedTrack).toHaveBeenCalledWith('capture_discarded', { motivo: 'erro_salvar' });
     });
 
     it('logs capture_failed for an async native error event', async () => {

@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Linking, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import { colors } from '../../shared/theme/colors';
 import type { RootStackParamList } from '../../shared/types';
-import { getSponsorConfig } from '../../config/remoteConfig';
+import { getConfigString, getSponsorConfig, safeHttpsUrl } from '../../config/remoteConfig';
+import { track } from '../../analytics';
+import { isPescaCertaCtaEnabled, sendCatchToPescaCerta } from '../ecosystem/pescaCerta';
 import { COMMON_SPECIES, exportClip, formatWeight, shareExported } from './exportClip';
 import { isVideoExportAvailable } from './native/VideoExportModule';
 import { styles } from './ExportScreen.styles';
@@ -30,14 +32,42 @@ export function ExportScreen({ route }: Props) {
 
   const weightInvalid = weight.trim() !== '' && formatWeight(weight) === '';
   const available = isVideoExportAvailable();
+  const showPescaCerta = useMemo(() => isPescaCertaCtaEnabled(), []);
+  const sponsorLink = useMemo(() => safeHttpsUrl(getConfigString('sponsor_link_url')), []);
+  const showSponsorNote = sponsor.watermarkEnabled && sponsor.watermarkAssetUrl !== '';
+
+  useEffect(() => {
+    if (showPescaCerta) track('pesca_certa_cta_viewed', { contexto: 'export' });
+  }, [showPescaCerta]);
+
+  const handlePescaCerta = () => {
+    if (!clip) return;
+    track('pesca_certa_cta_clicked', { contexto: 'export' });
+    sendCatchToPescaCerta(species, clip.createdAt)
+      .then(outcome => {
+        if (outcome === 'falhou') setError('Não foi possível abrir o Pesca Certa.');
+      })
+      .catch(() => undefined);
+  };
+
+  const handleSponsorPress = () => {
+    if (!sponsorLink) return;
+    track('sponsor_clicked', { sponsor_id: sponsor.sponsorId, posicao: sponsor.sponsorPosition });
+    Linking.openURL(sponsorLink).catch(() => undefined);
+  };
 
   const handleExport = async () => {
     if (!clip || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { result } = await exportClip({ clipPath: clip.path, portrait9x16: portrait, species, weight });
-      await shareExported(result.path);
+      const outcome = await exportClip({ clipPath: clip.path, portrait9x16: portrait, species, weight });
+      await shareExported(outcome.result.path, {
+        formato: outcome.formato,
+        marcaDagua: outcome.withWatermark,
+        overlay: outcome.withCaption,
+        sponsorId: outcome.sponsorId,
+      });
     } catch {
       setError('Não foi possível exportar o vídeo. Tente de novo.');
     } finally {
@@ -102,9 +132,15 @@ export function ExportScreen({ route }: Props) {
         />
         {weightInvalid && <Text style={styles.error}>Peso inválido: use só números, como 2,4.</Text>}
 
-        {sponsor.watermarkEnabled && sponsor.watermarkAssetUrl !== '' && (
-          <Text style={styles.sponsorNote} testID="export-sponsor-note">
+        {showSponsorNote && (
+          <Text
+            style={styles.sponsorNote}
+            testID="export-sponsor-note"
+            onPress={sponsorLink ? handleSponsorPress : undefined}
+            accessibilityRole={sponsorLink ? 'link' : undefined}
+          >
             Este vídeo sai com a marca do patrocinador do Peguei.
+            {sponsorLink ? ' Conheça o patrocinador.' : ''}
           </Text>
         )}
         {!available && <Text style={styles.error}>Atualize o app para exportar vídeos.</Text>}
@@ -122,6 +158,17 @@ export function ExportScreen({ route }: Props) {
           {busy && <ActivityIndicator color={colors.textLight} />}
           <Text style={styles.buttonLabel}>{busy ? 'Exportando…' : 'Exportar e compartilhar'}</Text>
         </Pressable>
+        {showPescaCerta && (
+          <Pressable
+            testID="export-pesca-certa"
+            accessibilityRole="button"
+            disabled={!clip}
+            onPress={handlePescaCerta}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonLabel}>Registrar no diário do Pesca Certa</Text>
+          </Pressable>
+        )}
       </View>
     </SafeAreaView>
   );

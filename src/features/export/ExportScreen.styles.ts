@@ -48,4 +48,13 @@ export const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.6 },
   buttonLabel: { ...typography.bodyStrong, color: colors.textLight, marginLeft: 8 },
+  secondaryButton: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  secondaryButtonLabel: { ...typography.bodyStrong, color: colors.accent },
 });

@@ -8,6 +8,12 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
  * path (opt-out, development mode, provider) as JS events.
  */
 export const NATIVE_EVENT = 'PegueiAnalyticsEvent';
+/** `{ connection: 'wifi' | 'cell' | 'offline' }`, sent when the network changes (and once when JS starts listening). */
+export const CONNECTION_EVENT = 'PegueiConnectionChanged';
+
+export interface NativeConnectionEvent {
+  connection?: unknown;
+}
 
 export interface NativeAnalyticsEvent {
   name: string;

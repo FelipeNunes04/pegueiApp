@@ -34,7 +34,44 @@ jest.mock('./src/analytics/track', () => {
   };
 });
 
+// Fishing sessions run timers (5-min samples, 10-min grace) that would keep
+// screen tests alive; screens are tested against these calls. The module is
+// tested for real in src/analytics/__tests__/fishingSession.test.ts.
+jest.mock('./src/analytics/fishingSession', () => {
+  const actual = jest.requireActual('./src/analytics/fishingSession');
+  return {
+    ...actual,
+    initFishingSessions: jest.fn().mockResolvedValue(undefined),
+    noteBufferStarted: jest.fn(),
+    noteBufferStopped: jest.fn(),
+    noteCaptureSaved: jest.fn(),
+  };
+});
+
 jest.mock('@react-native-firebase/app', () => ({}));
+
+jest.mock('@react-native-firebase/crashlytics', () => ({
+  __esModule: true,
+  getCrashlytics: jest.fn(() => ({})),
+  log: jest.fn(),
+  recordError: jest.fn(),
+  setAttributes: jest.fn().mockResolvedValue(null),
+  setCrashlyticsCollectionEnabled: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('@react-native-firebase/perf', () => {
+  const perf = { dataCollectionEnabled: false, instrumentationEnabled: false };
+  return {
+    __esModule: true,
+    getPerformance: jest.fn(() => perf),
+    trace: jest.fn(() => ({
+      start: jest.fn().mockResolvedValue(null),
+      stop: jest.fn().mockResolvedValue(null),
+      putAttribute: jest.fn(),
+      putMetric: jest.fn(),
+    })),
+  };
+});
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest'),
@@ -104,5 +141,15 @@ jest.mock('@react-native-firebase/remote-config', () => {
       return value === true || value === 'true';
     }),
     getString: jest.fn((_rc, key) => String(key in values ? values[key] : rc.defaultConfig[key] ?? '')),
+    getValue: jest.fn((_rc, key) => {
+      const has = key in values || key in rc.defaultConfig;
+      const raw = key in values ? values[key] : rc.defaultConfig[key];
+      return {
+        getSource: () => (key in values ? 'remote' : has ? 'default' : 'static'),
+        asBoolean: () => raw === true || raw === 'true',
+        asNumber: () => Number(raw),
+        asString: () => String(raw ?? ''),
+      };
+    }),
   };
 });

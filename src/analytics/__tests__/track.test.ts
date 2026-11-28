@@ -45,6 +45,7 @@ describe('track', () => {
       platform: expect.any(String),
       device_model: expect.any(String),
       os_version: expect.any(String),
+      connection: 'unknown',
       buffer_s: 30,
       lente: '1x',
     });

@@ -1,6 +1,10 @@
 {
   "react-native": {
     "google_analytics_adid_collection_enabled": false,
-    "google_analytics_default_allow_ad_personalization_signals": false
+    "google_analytics_default_allow_ad_personalization_signals": false,
+    "crashlytics_auto_collection_enabled": true,
+    "crashlytics_debug_enabled": false,
+    "crashlytics_is_error_generation_on_js_crash_enabled": true,
+    "crashlytics_javascript_exception_handler_chaining_enabled": true
   }
 }

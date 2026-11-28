@@ -241,6 +241,13 @@ object CameraEncoderController {
     private val watchdog = FrameFlowWatchdog()
     @Volatile
     private var lastVideoFrameAtMs = 0L
+
+    /** Video frames encoded since the process started, for the analytics
+     *  `dropped_frames_pct` sample (read every 5 min at most by
+     *  PegueiAnalyticsModule). One lock-free increment per frame on the drain thread. */
+    private val encodedVideoFrames = AtomicLong(0)
+
+    fun encodedVideoFrameCount(): Long = encodedVideoFrames.get()
     private var watchdogTicking = false
     private val watchdogTick = Runnable { onWatchdogTick() }
 
@@ -1329,6 +1336,7 @@ object CameraEncoderController {
                                 ringBuffer?.add(frame)
                                 onFrameEncoded(frame)
                                 lastVideoFrameAtMs = SystemClock.elapsedRealtime()
+                                encodedVideoFrames.incrementAndGet()
                             }
                             codec.releaseOutputBuffer(outIndex, false)
                         }

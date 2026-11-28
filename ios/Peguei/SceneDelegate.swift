@@ -25,10 +25,24 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     self.window = window
     appDelegate.window = window
 
+    // A cold start from a link (peguei://camera?from=pesca_certa...): with
+    // scenes the URL arrives here, not in didFinishLaunching, so hand it to
+    // React Native as the launch URL for Linking.getInitialURL().
+    var launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    if let url = connectionOptions.urlContexts.first?.url {
+      launchOptions = [.url: url]
+    }
+
     appDelegate.reactNativeFactory?.startReactNative(
       withModuleName: "Peguei",
       in: window,
-      launchOptions: nil
+      launchOptions: launchOptions
     )
+  }
+
+  // A link while the app is already running: React Native's Linking 'url' event.
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    guard let url = URLContexts.first?.url else { return }
+    RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
   }
 }

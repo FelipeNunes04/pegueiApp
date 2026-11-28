@@ -3,6 +3,7 @@ import {
   getBoolean,
   getRemoteConfig,
   getString,
+  getValue,
 } from '@react-native-firebase/remote-config';
 import type { SponsorPosicao } from '../analytics';
 
@@ -19,9 +20,33 @@ export const REMOTE_CONFIG_DEFAULTS = {
   sponsor_id: '',
   sponsor_position: 'bottom_right',
   overlay_sponsor_logo_url: '',
+  /** Tap on the sponsor note in the export screen opens this (https). Empty: not tappable. */
+  sponsor_link_url: '',
+
+  // Analytics (1.3.0). Defaults keep the app working offline and before the first fetch.
+  /** Remote kill switch for every event (the local opt-out still wins). */
+  analytics_enabled: true,
+  /** Fishing session events and the 5-min device samples. */
+  session_metrics_enabled: true,
+  /** Minutes between buffer_health_sampled; never less than 5. */
+  buffer_sample_interval_min: 5,
+
+  // New features that change what users see: off until switched on.
+  /** Warns on the camera screen when free space is low. */
+  storage_warning_enabled: false,
+  storage_warning_gb: 2,
+  /** "Registrar no Pesca Certa" on the export screen (deep link to the diary). */
+  pesca_certa_cta_enabled: false,
+  pesca_certa_app_store_url: 'https://apps.apple.com/app/id6760917467',
+  pesca_certa_play_url: 'https://play.google.com/store/apps/details?id=br.com.pescacerta.android',
 } as const;
 
 export type RemoteConfigKey = keyof typeof REMOTE_CONFIG_DEFAULTS;
+
+type KeysOfType<T> = { [K in RemoteConfigKey]: (typeof REMOTE_CONFIG_DEFAULTS)[K] extends T ? K : never }[RemoteConfigKey];
+export type BooleanConfigKey = KeysOfType<boolean>;
+export type NumberConfigKey = KeysOfType<number>;
+export type StringConfigKey = KeysOfType<string>;
 
 export interface SponsorConfig {
   watermarkEnabled: boolean;
@@ -92,6 +117,38 @@ export function getSponsorConfig(): SponsorConfig {
   } catch {
     return defaultSponsorConfig();
   }
+}
+
+/**
+ * The activated value of a key, or null while it has no value at all
+ * (source `static`: before the native defaults are set on a cold start).
+ * Null makes the getters below use the local default, so a flag never reads
+ * as `false` just because Remote Config is not ready yet.
+ */
+function activeValue(key: RemoteConfigKey): ReturnType<typeof getValue> | null {
+  try {
+    const value = getValue(getRemoteConfig(), key);
+    return value.getSource() === 'static' ? null : value;
+  } catch {
+    return null;
+  }
+}
+
+/** A boolean flag; its local default when Remote Config is missing, not ready or fails. */
+export function getFlag(key: BooleanConfigKey): boolean {
+  const value = activeValue(key);
+  return value ? value.asBoolean() : REMOTE_CONFIG_DEFAULTS[key];
+}
+
+export function getConfigNumber(key: NumberConfigKey): number {
+  const value = activeValue(key);
+  const n = value ? value.asNumber() : NaN;
+  return Number.isFinite(n) ? n : REMOTE_CONFIG_DEFAULTS[key];
+}
+
+export function getConfigString(key: StringConfigKey): string {
+  const value = activeValue(key);
+  return value ? value.asString() : REMOTE_CONFIG_DEFAULTS[key];
 }
 
 /** Tests only. */

@@ -9,7 +9,7 @@ jest.mock('../exportClip', () => {
   const actual = jest.requireActual('../exportClip');
   return {
     ...actual,
-    exportClip: jest.fn().mockResolvedValue({ result: { path: '/out.mp4', width: 1080, height: 1920, durationSeconds: 10 }, withWatermark: false, withCaption: false }),
+    exportClip: jest.fn().mockResolvedValue({ result: { path: '/out.mp4', width: 1080, height: 1920, durationSeconds: 10 }, withWatermark: false, withCaption: false, formato: '9_16', sponsorId: '' }),
     shareExported: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -40,7 +40,7 @@ describe('ExportScreen', () => {
     await fireEvent.changeText(getByTestId('export-weight-input'), '2,4');
     await fireEvent.press(getByTestId('export-submit'));
 
-    await waitFor(() => expect(shareExported).toHaveBeenCalledWith('/out.mp4'));
+    await waitFor(() => expect(shareExported).toHaveBeenCalledWith('/out.mp4', { formato: '9_16', marcaDagua: false, overlay: false, sponsorId: '' }));
     expect(mockedExport).toHaveBeenCalledWith({ clipPath: '/clips/c1.mp4', portrait9x16: true, species: 'Tucunaré', weight: '2,4' });
   });
 

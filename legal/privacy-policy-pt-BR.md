@@ -1,6 +1,6 @@
 # Política de Privacidade — Peguei
 
-**Última atualização:** 26 de novembro de 2026
+**Última atualização:** 28 de novembro de 2026
 
 Esta Política de Privacidade descreve como o aplicativo **Peguei** ("o App") trata as informações dos seus usuários.
 
@@ -31,9 +31,12 @@ O App usa o **Firebase Analytics** (serviço do Google) para entender, de forma 
 - **Eventos de uso**, sem o conteúdo dos vídeos: buffer ligado e desligado (duração e lente), gravação iniciada, vídeo salvo (duração, resolução, quadros por segundo e lente), falhas de gravação (código do erro, sem nomes de arquivo), vídeo exportado (com ou sem marca d'água e legenda), para qual app o vídeo foi compartilhado (WhatsApp, Instagram, TikTok, YouTube, Facebook ou outro), pedido de avaliação exibido e se a chave Pix de doação foi copiada.
 - **Respostas opcionais do início do App**: tipo de pesca e estado (UF). Você pode pular essa etapa.
 - **Legenda do vídeo exportado**: o nome da espécie que você digitar e se informou o peso (o valor do peso não é enviado).
+- **Sessões de pesca e estado do aparelho**: quanto tempo o buffer ficou ligado, quantos vídeos foram salvos na sessão, nível da bateria, estado de temperatura do aparelho (normal, elevado, alto ou crítico), memória usada pelo App, quadros perdidos e o tipo de conexão (Wi-Fi, dados móveis ou sem internet). No Android também é enviada a faixa de espaço livre (por exemplo, "2 a 5 GB"); no iPhone o espaço livre só é usado no próprio aparelho, para avisar quando está acabando.
+- **Diagnóstico**: relatórios de falha (crash) e erros pelo **Firebase Crashlytics**, e tempos de abertura da câmera, de salvar e de exportar vídeos pelo **Firebase Performance Monitoring**. Os relatórios trazem as configurações de gravação (duração do buffer, lente, resolução) e o estado de temperatura, nunca vídeos ou nomes de arquivo.
+- **Integração com o Pesca Certa**: se o Pesca Certa abrir o Peguei, ou se você enviar uma captura para o diário do Pesca Certa, registramos que isso aconteceu e a espécie enviada. O link leva só a espécie, a data e, quando conhecida, uma área aproximada (geohash de cerca de 5 km), nunca o local exato.
 - Identificadores técnicos padrão do Firebase (ID de instalação do App, modelo do aparelho, versão do sistema operacional e versão do App). Não coletamos nome, e-mail, telefone, localização do aparelho nem o identificador de publicidade (Ad ID).
 
-Você pode desligar o envio a qualquer momento em **Configurações → Privacidade → Enviar dados de uso**. A escolha fica guardada só no seu aparelho.
+Você pode desligar o envio a qualquer momento em **Configurações → Privacidade → Enviar dados de uso**. Isso desliga também o Crashlytics e o Performance Monitoring. A escolha fica guardada só no seu aparelho.
 
 Esses dados são processados pelo Google como operador, conforme a [Política de Privacidade do Google](https://policies.google.com/privacy) e os [Termos do Firebase](https://firebase.google.com/terms). Nenhum vídeo, áudio ou imagem é enviado, apenas os eventos e metadados descritos acima.
 

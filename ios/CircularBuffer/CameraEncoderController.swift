@@ -947,6 +947,7 @@ final class CameraEncoderController: NSObject {
         }
         encoderErrorPolicy.recordSuccess()
         lastEncodedFrameUptime = Self.uptime
+        EncodedFrameStats.noteFrame()
         ringBuffer?.add(frame)
         var memoryLimitCut: EarlyFinalization?
         if pendingSave != nil {
