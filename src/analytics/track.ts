@@ -7,7 +7,17 @@ import {
   type UserProperties,
 } from './events';
 import { loadAnalyticsConsent, saveAnalyticsConsent } from './consent';
-import { getDeviceConstants, nativeAnalyticsEvents, NATIVE_EVENT, type NativeAnalyticsEvent } from './nativeAnalytics';
+import { getAnalyticsContext, setAnalyticsConnection, toConnection } from './context';
+import {
+  CONNECTION_EVENT,
+  getDeviceConstants,
+  nativeAnalyticsEvents,
+  NATIVE_EVENT,
+  type NativeAnalyticsEvent,
+  type NativeConnectionEvent,
+} from './nativeAnalytics';
+import { breadcrumb, setObservabilityEnabled } from './observability';
+import { getFlag } from '../config/remoteConfig';
 import { createDefaultProvider, createFirebaseProvider } from './providers';
 import type { AnalyticsParams, AnalyticsProvider } from './providers';
 
@@ -17,8 +27,9 @@ import type { AnalyticsParams, AnalyticsProvider } from './providers';
  * never a slower camera.
  */
 
-// Firebase limits: 40-char param names, 100-char string values.
+// Firebase limits: 40-char param names, 100-char string values, 36-char user property values.
 const MAX_STRING_LENGTH = 100;
+const MAX_USER_PROPERTY_LENGTH = 36;
 // Events made before the saved opt-out choice is read. Startup only, so small.
 const MAX_PENDING = 50;
 
@@ -29,6 +40,7 @@ let consent: 'unknown' | 'enabled' | 'disabled' = 'unknown';
 let pending: Action[] = [];
 let commonParams: AnalyticsParams | null = null;
 let nativeSubscription: EmitterSubscription | null = null;
+let connectionSubscription: EmitterSubscription | null = null;
 let initPromise: Promise<void> | null = null;
 
 function getCommonParams(): AnalyticsParams {
@@ -52,9 +64,16 @@ function toParamValue(value: unknown): string | number | null {
   return null;
 }
 
-/** Event props + common params, in the types Firebase accepts. Exported for tests. */
+/**
+ * Event props + common params, in the types Firebase accepts. `connection`,
+ * `uf` and `region_geohash5` are read now, so they are the ones at the time
+ * of the event; empty `uf`/region are left out. Exported for tests.
+ */
 export function toParams(props: object | undefined): AnalyticsParams {
-  const params: AnalyticsParams = { ...getCommonParams() };
+  const ctx = getAnalyticsContext();
+  const params: AnalyticsParams = { ...getCommonParams(), connection: ctx.connection };
+  if (ctx.uf) params.uf = ctx.uf;
+  if (ctx.region_geohash5) params.region_geohash5 = ctx.region_geohash5;
   if (!props) return params;
   for (const [key, value] of Object.entries(props)) {
     const converted = toParamValue(value);
@@ -65,6 +84,8 @@ export function toParams(props: object | undefined): AnalyticsParams {
 
 function run(action: Action): void {
   if (consent === 'disabled') return;
+  // Remote kill switch (default on). The local opt-out above always wins.
+  if (!getFlag('analytics_enabled')) return;
   if (consent === 'unknown') {
     if (pending.length < MAX_PENDING) pending.push(action);
     return;
@@ -77,7 +98,11 @@ function run(action: Action): void {
 }
 
 function logEvent(name: AnalyticsEventName, props: object | undefined): void {
-  run(p => p.logEvent(name, toParams(props)));
+  const params = toParams(props);
+  run(p => {
+    p.logEvent(name, params);
+    breadcrumb(name);
+  });
 }
 
 /** Sends one event. The compiler checks the name and its props against events.ts. */
@@ -97,7 +122,7 @@ export function identify(userId: string | null): void {
 export function setUserProperties(properties: Partial<UserProperties>): void {
   const values: Record<string, string | null> = {};
   for (const [key, value] of Object.entries(properties)) {
-    values[key] = value ?? null;
+    values[key] = typeof value === 'string' && value ? value.slice(0, MAX_USER_PROPERTY_LENGTH) : null;
   }
   run(p => p.setUserProperties(values));
 }
@@ -121,7 +146,12 @@ function applyConsent(enabled: boolean): void {
       // Firebase missing (broken build): nothing to switch off.
     }
   }
-  provider.setCollectionEnabled(enabled);
+  try {
+    provider.setCollectionEnabled(enabled);
+  } catch {
+    // ignore
+  }
+  setObservabilityEnabled(enabled);
   const queued = pending;
   pending = [];
   if (enabled) queued.forEach(run);
@@ -132,13 +162,22 @@ export function initAnalytics(): Promise<void> {
   if (!nativeSubscription && nativeAnalyticsEvents) {
     nativeSubscription = nativeAnalyticsEvents.addListener(NATIVE_EVENT, handleNativeEvent);
   }
+  if (!connectionSubscription && nativeAnalyticsEvents) {
+    try {
+      connectionSubscription = nativeAnalyticsEvents.addListener(CONNECTION_EVENT, (event: NativeConnectionEvent) =>
+        setAnalyticsConnection(toConnection(event?.connection)),
+      );
+    } catch {
+      // A native binary older than 1.3.0 does not declare this event.
+    }
+  }
   if (!initPromise) {
     initPromise = loadAnalyticsConsent().then(applyConsent);
   }
   return initPromise;
 }
 
-/** Settings switch. Turning it off also stops Firebase's automatic events. */
+/** Settings switch. Turning it off also stops Firebase's automatic events, Crashlytics and Performance. */
 export function setAnalyticsEnabled(enabled: boolean): void {
   saveAnalyticsConsent(enabled);
   applyConsent(enabled);
@@ -153,6 +192,8 @@ export function resetAnalyticsForTests(testProvider: AnalyticsProvider): void {
   initPromise = null;
   nativeSubscription?.remove();
   nativeSubscription = null;
+  connectionSubscription?.remove();
+  connectionSubscription = null;
 }
 
 /** Tests only: what a native event goes through. */

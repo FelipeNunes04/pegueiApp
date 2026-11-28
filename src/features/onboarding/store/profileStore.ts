@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { UFS, setUserProperties, type Estado, type TipoPesca } from '../../../analytics';
+import { UFS, setAnalyticsUf, setUserProperties, type Estado, type TipoPesca } from '../../../analytics';
 
 /**
  * The optional "how do you fish / where" answers from onboarding. Used only
@@ -39,7 +39,9 @@ export const useProfileStore = create<ProfileState>(set => ({
       const parsed: unknown = raw ? JSON.parse(raw) : null;
       if (parsed && typeof parsed === 'object') {
         const { tipoPesca, estado } = parsed as Record<string, unknown>;
-        set({ tipoPesca: isTipo(tipoPesca) ? tipoPesca : 'nao_informado', estado: isEstado(estado) ? estado : 'nao_informado' });
+        const uf = isEstado(estado) ? estado : 'nao_informado';
+        set({ tipoPesca: isTipo(tipoPesca) ? tipoPesca : 'nao_informado', estado: uf });
+        setAnalyticsUf(uf);
       }
     } catch {
       // Keep the defaults.
@@ -47,6 +49,7 @@ export const useProfileStore = create<ProfileState>(set => ({
   },
   saveProfile: profile => {
     set(profile);
+    setAnalyticsUf(profile.estado);
     setUserProperties({ tipo_pesca: profile.tipoPesca, uf: profile.estado });
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(profile)).catch(() => undefined);
   },
