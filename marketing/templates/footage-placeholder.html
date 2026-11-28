@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Placeholder for real fishing footage (marketing/footage/). Felipe swaps in the real
+     clip with scripts/swap-footage.sh. ?step=<label>&n=<1..3> -->
+<html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css"><style>
+body{background:linear-gradient(180deg,#1C7EA6 0%,#3FA79A 52%,#0B4F4F 53%,#0A1414 100%);display:flex;align-items:center;justify-content:center}
+.box{width:82%;padding:6vw 4vw;border-radius:4vw;font-size:7vw;line-height:1.1;flex-direction:column;gap:3vw}
+.box small{font-size:3.6vw;color:var(--text-dark);font-weight:400;letter-spacing:0}
+.step{font-size:5vw;color:#fff;background:var(--error);padding:1.5vw 3vw;border-radius:2vw}
+</style></head><body>
+<div class="box placeholder"><span>VÍDEO REAL DE PESCARIA AQUI</span><span class="step" id="s"></span>
+<small>Placeholder. Troque por marketing/footage/pescaria.mp4 com scripts/swap-footage.sh</small></div>
+<script>const q=new URLSearchParams(location.search);
+if(q.get('compact'))document.querySelector('.box').style.cssText='width:62%;font-size:5.4vw';const s=document.getElementById('s');
+q.get('step')?s.textContent=q.get('step'):s.remove();</script>
+</body></html>

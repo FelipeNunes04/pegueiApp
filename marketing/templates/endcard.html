@@ -1,0 +1,11 @@
+<!doctype html>
+<!-- Closing card of the preview videos. ?cta=<text> -->
+<html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css"><style>
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4vh;text-align:center}
+img{width:30vmin;border-radius:7vmin;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+h1{margin:0;font-size:9vmin;font-weight:800}
+p{margin:0 8vw;font-size:5.6vmin;color:var(--muted);text-wrap:balance}
+b{color:var(--accent)}
+</style></head><body><img src="icon-1024.png" alt=""><h1>Peguei</h1><p>Nunca mais perca a <b>fisgada</b></p>
+<p id="c"></p><script>document.getElementById('c').textContent=new URLSearchParams(location.search).get('cta')||'';</script>
+</body></html>

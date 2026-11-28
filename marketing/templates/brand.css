@@ -1,0 +1,15 @@
+/* Peguei brand tokens (BRAND.md). Shared by every marketing template. */
+@font-face{font-family:Inter;font-weight:400;src:url("fonts/Inter_400Regular.ttf")}
+@font-face{font-family:Inter;font-weight:800;src:url("fonts/Inter_800ExtraBold.ttf")}
+:root{
+  --primary:#0B4F4F;--primary-light:#3FA79A;--secondary:#1C7EA6;--accent:#F5A623;--accent-alt:#FFD166;
+  --success:#2FBF71;--error:#E5484D;--bg-dark:#0A1414;--surface-dark:#14201F;--text-dark:#F2F5F5;
+  --bg-light:#F5F7F7;--text-light:#0B1F1F;--muted:#cfdedc;
+  --brand-bg:radial-gradient(120% 60% at 50% 0%,#0B4F4F 0%,#0A2E2E 50%,#0A1414 100%);
+}
+*{box-sizing:border-box}
+html,body{margin:0;overflow:hidden;width:100%;height:100%}
+body{font-family:Inter,-apple-system,sans-serif;color:#fff;background:var(--brand-bg)}
+.a{color:var(--accent)}
+.placeholder{border:4px dashed var(--accent);background:repeating-linear-gradient(135deg,#14201F 0 24px,#0f1918 24px 48px);
+  color:var(--accent);display:flex;align-items:center;justify-content:center;text-align:center;font-weight:800;letter-spacing:.04em}

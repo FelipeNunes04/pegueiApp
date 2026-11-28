@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Store screenshot frame. Rendered by scripts/store-assets.sh with headless Chrome:
+     screenshot.html?img=<raw png>&title=<text, [accent]>&sub=<text>
+     The canvas is the Chrome window size (1320x2868, 2064x2752, 1080x1920...). -->
+<html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css"><style>
+body{display:flex;flex-direction:column;align-items:center;position:relative}
+h1{margin:0;font-weight:800;line-height:1.06;letter-spacing:-0.02em;text-align:center;text-wrap:balance}
+p{margin:0;line-height:1.3;color:var(--muted);text-align:center;text-wrap:balance}
+.dev{position:absolute;left:50%;transform:translateX(-50%);background:#050a0a;
+  box-shadow:0 40px 120px rgba(0,0,0,.55),0 0 0 3px rgba(255,255,255,.08)}
+.dev img{display:block;width:100%}
+.island{position:absolute;left:50%;transform:translateX(-50%);background:#050a0a;border-radius:999px}
+</style></head><body>
+<h1 id="t"></h1><p id="s"></p>
+<div class="dev" id="d"><img id="i" alt=""><div class="island" id="n"></div></div>
+<script>
+const q=new URLSearchParams(location.search), W=innerWidth, H=innerHeight, k=W/1320;
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const t=document.getElementById('t'), s=document.getElementById('s');
+t.innerHTML=esc(q.get('title')||'').replace(/\[([^\]]+)\]/g,'<span class="a">$1</span>');
+s.textContent=q.get('sub')||'';
+const tablet=W/H>0.6, short=H/W<1.9;
+t.style.cssText=`font-size:${(tablet?92:short?80:100)*k}px;margin:${(tablet?150:short?90:190)*k}px ${90*k}px 0`;
+s.style.cssText=`font-size:${(tablet?40:short?42:46)*k}px;margin:${26*k}px ${110*k}px 0`;
+const img=document.getElementById('i'), d=document.getElementById('d'), n=document.getElementById('n');
+img.onload=()=>{
+  const ratio=img.naturalWidth/img.naturalHeight, textBottom=s.getBoundingClientRect().bottom+(tablet?60:50)*k;
+  const bezel=(tablet?20:16)*k;
+  let w;
+  if(tablet){ w=W*0.84; d.style.top=textBottom+'px'; }          // tablet: big, cropped at the bottom edge
+  else { w=Math.min((H-textBottom-40*k-2*bezel)*ratio, W*0.8); d.style.bottom=40*k+'px'; }
+  const r=w*(tablet?0.04:0.11);
+  d.style.width=w+'px'; d.style.padding=bezel+'px'; d.style.borderRadius=r+'px';
+  img.style.borderRadius=(r-bezel)+'px';
+  // Phone frames get a camera island; Android frames (no=1) and tablets don't.
+  if(!tablet && q.get('island')!=='0'){ n.style.cssText+=`;top:${bezel+w*0.028}px;width:${w*0.28}px;height:${w*0.085}px`; }
+  else n.remove();
+  document.title='ready';
+};
+img.src=q.get('img');
+</script></body></html>
