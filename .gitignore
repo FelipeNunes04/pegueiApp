@@ -93,3 +93,8 @@ android/keystores/
 # Google Play service account key -- grants EAS Submit release-management
 # access to the Play Console app; never commit.
 google-play-service-account.json
+
+# Material real de pescaria e trilha (scripts/swap-footage.sh). Só os placeholders vão para o git.
+marketing/footage/pescaria.mp4
+marketing/footage/frame.jpg
+marketing/footage/trilha.*

@@ -1,0 +1,3 @@
+• Pesca Certa can now open Peguei's camera on iPhone too.
+• Crash and performance reports so we can fix problems faster. You can turn them off in Settings → Privacy.
+• The back button on the export screen now says "Vídeo".

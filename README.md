@@ -63,7 +63,7 @@ yarn tsc --noEmit
 ## Other docs in this repo
 
 - `BRAND.md` — palette, typography, tone of voice; source of truth for `src/theme/`.
-- `/store-listing/` — App Store and Play Store copy (name/subtitle, description, keywords, screenshot text), PT-BR and EN-US.
+- `/fastlane/metadata/` — App Store and Play Store copy (pt-BR first, en-US), validated by `node scripts/validate-store-text.mjs`. Screenshots, previews and marketing: `/marketing/` (see `marketing/README.md`); landing page: `/site/`.
 - `/legal/` — draft Privacy Policy and Terms of Use (PT-BR and EN-US). **These are unreviewed drafts** — see the banner at the top of each file.
 
 ## Known limitations

@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Transparent caption overlay for the preview videos. ?text=<[accent]>&pos=top|bottom&tap=x,y -->
+<html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css"><style>
+html,body{background:transparent!important}
+.c{position:absolute;left:6%;right:6%;padding:3.2vw 4vw;border-radius:3vw;background:rgba(10,20,20,.86);
+  font-weight:800;font-size:6.4vw;line-height:1.12;text-align:center;letter-spacing:-.01em;text-wrap:balance}
+.tap{position:absolute;width:22vw;height:22vw;margin:-11vw 0 0 -11vw;border-radius:50%;
+  border:1.2vw solid rgba(255,255,255,.95);box-shadow:0 0 0 2vw rgba(245,166,35,.55)}
+</style></head><body><div class="c" id="c"></div><div class="tap" id="t"></div>
+<script>const q=new URLSearchParams(location.search),c=document.getElementById('c'),t=document.getElementById('t');
+const esc=s=>s.replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));
+const text=q.get('text')||''; if(text){c.innerHTML=esc(text).replace(/\[([^\]]+)\]/g,'<span class="a">$1</span>');
+c.style[q.get('pos')==='bottom'?'bottom':'top']=q.get('pos')==='bottom'?'21%':'9%';} else c.remove();
+const tap=q.get('tap'); if(tap){const [x,y]=tap.split(',');t.style.left=x+'%';t.style.top=y+'%';} else t.remove();</script>
+</body></html>

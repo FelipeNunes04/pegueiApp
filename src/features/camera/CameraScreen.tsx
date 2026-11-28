@@ -23,14 +23,23 @@ import { PocketModeIcon, SettingsGearIcon } from '../../shared/components/icons'
 import { listSavedClips } from '../../shared/utils/files';
 import type { RootStackParamList } from '../../shared/types';
 import { styles } from './CameraScreen.styles';
+import { DEMO_MODE } from '../../demo/demoMode';
+import { useDemoCircularBuffer, useDemoZoom } from '../../demo/useDemoCircularBuffer';
+import { DemoCameraPreview } from '../../demo/DemoCameraPreview';
+
+// Picked once at module load. DEMO_MODE is a constant false outside debug
+// builds launched with -pegueiDemo, so normal builds always get the real
+// native buffer, zoom and preview (see src/demo/demoMode.ts).
+const useBuffer = DEMO_MODE ? useDemoCircularBuffer : useCircularBuffer;
+const useCameraZoom = DEMO_MODE ? useDemoZoom : useZoom;
+const Preview = DEMO_MODE ? DemoCameraPreview : CircularBufferPreview;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Camera'>;
 
 const NOTICE_DURATION_MS = 6000;
 
 export function CameraScreen({ navigation }: Props) {
-  const { phase, start, stop, startRecording, stopRecording } =
-    useCircularBuffer();
+  const { phase, start, stop, startRecording, stopRecording } = useBuffer();
   const bufferSeconds = useSettingsStore(s => s.bufferSeconds);
   const hardwareTriggersEnabled = useSettingsStore(s => s.hardwareTriggersEnabled);
   const autoStopMinutes = useSettingsStore(s => s.autoStopMinutes);
@@ -41,7 +50,7 @@ export function CameraScreen({ navigation }: Props) {
   const clearNotice = useRecordingStore(s => s.clearNotice);
   const clips = useRecordingStore(s => s.clips);
   const setClips = useRecordingStore(s => s.setClips);
-  const { zoomFactor, pillLevels, setZoom } = useZoom(phase);
+  const { zoomFactor, pillLevels, setZoom } = useCameraZoom(phase);
   const pinchHandlers = usePinchToZoom(zoomFactor, setZoom);
 
   // start/stop's identity changes whenever bufferSeconds/videoQuality/fps
@@ -196,7 +205,7 @@ export function CameraScreen({ navigation }: Props) {
       testID="camera-screen"
       onTouchStart={handleTouchStart}
     >
-      <CircularBufferPreview style={StyleSheet.absoluteFill} isActive />
+      <Preview style={StyleSheet.absoluteFill} isActive />
       <View
         style={StyleSheet.absoluteFill}
         {...pinchHandlers}

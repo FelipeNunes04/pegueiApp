@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peguei: câmera de pesca que grava a fisgada</title>
+<meta name="description" content="O Peguei deixa a câmera do celular sempre gravando e salva a fisgada que aconteceu antes do seu toque. Grátis para Android e iPhone.">
+<meta property="og:title" content="Peguei: nunca mais perca a fisgada">
+<meta property="og:description" content="A câmera de pesca que guarda os segundos antes do seu toque. Grátis para Android e iPhone.">
+<meta property="og:image" content="https://felipenunes04.github.io/pegueiApp/og.png">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0A1414">
+<link rel="icon" href="img/icon-192.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<!-- Abre o Peguei pela App Store quando instalado (Smart App Banner). -->
+<meta name="apple-itunes-app" content="app-id=6790596334">
+<style>
+@font-face{font-family:Inter;font-weight:400;font-display:swap;src:url("fonts/Inter_400Regular.ttf")}
+@font-face{font-family:Inter;font-weight:800;font-display:swap;src:url("fonts/Inter_800ExtraBold.ttf")}
+:root{--primary:#0B4F4F;--primary-light:#3FA79A;--secondary:#1C7EA6;--accent:#F5A623;--bg:#0A1414;--surface:#14201F;--text:#F2F5F5;--muted:#cfdedc}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:Inter,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:var(--accent)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+header.hero{background:radial-gradient(120% 70% at 50% 0%,#0B4F4F 0%,#0A2E2E 55%,#0A1414 100%)}
+.hero .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;padding-top:40px;padding-bottom:56px}
+.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:22px;margin-bottom:32px}
+.brand img{width:44px;height:44px;border-radius:11px}
+h1{font-size:clamp(38px,6vw,64px);line-height:1.04;letter-spacing:-.02em;margin:0 0 18px;font-weight:800}
+h2{font-size:clamp(26px,4vw,36px);line-height:1.1;margin:0 0 20px;font-weight:800}
+.a{color:var(--accent)}
+.lead{font-size:19px;color:var(--muted);margin:0 0 28px;max-width:34em}
+.stores{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;flex-direction:column;justify-content:center;min-height:56px;padding:8px 22px;border-radius:14px;text-decoration:none;font-weight:800;font-size:18px;color:#1a1100;background:var(--accent)}
+.btn small{font-weight:400;font-size:12px;opacity:.85}
+.btn.alt{background:transparent;color:var(--text);border:2px solid rgba(242,245,245,.35)}
+.note{font-size:14px;color:var(--muted);margin-top:14px}
+.phone{justify-self:center;width:min(300px,80vw);background:#050a0a;padding:10px;border-radius:44px;box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 2px rgba(255,255,255,.08)}
+.phone img{display:block;width:100%;border-radius:35px}
+section{padding:56px 0;border-top:1px solid rgba(255,255,255,.06)}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;counter-reset:s;padding:0;margin:0;list-style:none}
+.steps li{background:var(--surface);border-radius:18px;padding:22px;counter-increment:s}
+.steps li::before{content:counter(s);display:inline-flex;width:34px;height:34px;border-radius:50%;background:var(--primary-light);color:#062626;font-weight:800;align-items:center;justify-content:center;margin-bottom:12px}
+.steps b{display:block;margin-bottom:4px}
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feat div{background:var(--surface);border-radius:18px;padding:24px}
+.feat h3{margin:0 0 8px;font-size:22px}
+.feat p,.steps p{margin:0;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:16px}
+th,td{overflow-wrap:anywhere;padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.1);text-align:left;vertical-align:top}
+th.p{color:var(--accent)}
+td:first-child{color:var(--muted)}
+.cta{background:var(--surface);border-radius:22px;padding:32px;display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between}
+footer{padding:32px 0 48px;color:var(--muted);font-size:14px;border-top:1px solid rgba(255,255,255,.06)}
+footer nav{display:flex;flex-wrap:wrap;gap:18px;margin-bottom:10px}
+@media (max-width:820px){
+  .hero .wrap{grid-template-columns:1fr;padding-top:24px}
+  .steps{grid-template-columns:1fr 1fr}
+  .feat{grid-template-columns:1fr}
+}
+@media (max-width:480px){.steps{grid-template-columns:1fr}.btn{flex:1 1 100%}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <div class="brand"><img src="img/icon-192.png" alt="">Peguei</div>
+      <h1>Nunca mais perca a <span class="a">fisgada</span></h1>
+      <p class="lead">O Peguei deixa a câmera do celular sempre gravando e guarda só os últimos segundos. Quando o peixe pegar, toque na tela: o vídeo já começa antes do toque.</p>
+      <div class="stores">
+        <a class="btn" data-store="play" href="https://play.google.com/store/apps/details?id=com.felipenunes.pegueiapp&amp;referrer=utm_source%3Dsite%26utm_medium%3Dlanding%26utm_campaign%3Dlancamento_2026_12"><small>Baixar no</small>Google Play</a>
+        <a class="btn" data-store="appstore" href="https://apps.apple.com/br/app/peguei/id6790596334?ct=site_landing_lancamento_2026_12&amp;mt=8"><small>Baixar na</small>App Store</a>
+      </div>
+      <p class="note">Grátis, sem assinatura e sem anúncio em tela.</p>
+    </div>
+    <div class="phone"><img src="img/app-buffering.png" alt="Tela da câmera do Peguei com o buffer ligado e os botões de lente 0,5x, 1x e 2x" width="440" height="956"></div>
+  </div>
+</header>
+
+<main>
+<section>
+  <div class="wrap">
+    <h2>Como funciona</h2>
+    <ol class="steps">
+      <li><b>Abra o Peguei</b><p>Apoie o celular apontando para a vara ou para a água.</p></li>
+      <li><b>Ele grava sozinho</b><p>O buffer guarda os últimos segundos, sem encher a memória.</p></li>
+      <li><b>Fisgou? Toque</b><p>Toque na tela, no botão de volume ou num controle Bluetooth.</p></li>
+      <li><b>Vídeo com o antes</b><p>O clipe já começa antes do toque, com a fisgada inteira.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="feat">
+      <div><h3>Até <span class="a">60 s</span> de buffer</h3><p>Você escolhe de 15 a 60 segundos guardados antes do toque, e a qualidade conforme a câmera do celular.</p></div>
+      <div><h3>Lente <span class="a">0,5x</span></h3><p>Barco, vara e peixe no mesmo quadro, nos celulares com câmera ultra-angular.</p></div>
+      <div><h3>Pronto para <span class="a">Reels e TikTok</span></h3><p>Exporta em 9:16 com a espécie e o peso no vídeo. O original fica guardado.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Peguei ou GoPro?</h2>
+    <p class="lead">Para quem já tem um celular com boa câmera.</p>
+    <table>
+      <tr><th></th><th class="p">Peguei</th><th>GoPro</th></tr>
+      <tr><td>Custo</td><td>Grátis, usa o celular que você já tem</td><td>Mais um aparelho para comprar</td></tr>
+      <tr><td>Antes do toque</td><td>15 a 60 s, você escolhe</td><td>HindSight em alguns modelos</td></tr>
+      <tr><td>Para postar</td><td>O vídeo já está no celular, 9:16 pronto</td><td>Passa da câmera para o celular</td></tr>
+      <tr><td>Água e pancada</td><td>Use capa ou suporte</td><td>Feita para isso</td></tr>
+    </table>
+    <p class="note">Ferramentas diferentes, dá para usar as duas. GoPro é marca da GoPro, Inc., sem relação com o Peguei.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Seus vídeos ficam com você</h2>
+    <p class="lead">O Peguei grava no próprio aparelho e não manda vídeo para servidor nenhum. Não tem login, não usa ID de publicidade e não rastreia você entre apps. Os dados de uso, falhas e desempenho podem ser desligados em Configurações → Privacidade. Detalhes na <a href="privacidade.html">política de privacidade</a>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="cta">
+      <div><h2 style="margin:0 0 6px">Grupo de pescadores da região</h2><p style="margin:0;color:var(--muted)">Previsão do fim de semana às quintas (Pesca Certa) e as fisgadas da turma.</p></div>
+      <!-- TROCAR pelo link de convite do grupo (chat.whatsapp.com/...). O convite não aceita UTM:
+           quem chega aqui já veio com a UTM da landing. -->
+      <a class="btn alt" id="grupo" href="#grupo-whatsapp-link-aqui">Entrar no grupo do WhatsApp</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <nav>
+      <a href="privacidade.html">Política de privacidade</a>
+      <a href="termos.html">Termos de uso</a>
+      <a href="privacy.html" hreflang="en">Privacy policy (EN)</a>
+      <a href="terms.html" hreflang="en">Terms of use (EN)</a>
+    </nav>
+    <p>Peguei · felipennunes04@icloud.com · Instagram @pegueiapp</p>
+  </div>
+</footer>
+
+<script>
+// Repassa a UTM da visita para os botões das lojas (padrão em marketing/utm.md).
+// Sem UTM na visita, vale utm_source=site&utm_medium=landing&utm_campaign=lancamento_2026_12.
+(function () {
+  var q = new URLSearchParams(location.search);
+  var ok = /^[a-z0-9_]+$/;
+  var get = function (k, d) { var v = (q.get(k) || '').toLowerCase(); return ok.test(v) ? v : d; };
+  var src = get('utm_source', 'site'), med = get('utm_medium', 'landing'), camp = get('utm_campaign', 'lancamento_2026_12');
+  var content = get('utm_content', '');
+  var utm = 'utm_source=' + src + '&utm_medium=' + med + '&utm_campaign=' + camp + (content ? '&utm_content=' + content : '');
+  document.querySelectorAll('[data-store]').forEach(function (a) {
+    if (a.dataset.store === 'play') {
+      a.href = 'https://play.google.com/store/apps/details?id=com.felipenunes.pegueiapp&referrer=' + encodeURIComponent(utm);
+    } else {
+      a.href = 'https://apps.apple.com/br/app/peguei/id6790596334?ct=' + (src + '_' + med + '_' + camp).slice(0, 40) + '&mt=8';
+    }
+  });
+})();
+</script>
+</body>
+</html>

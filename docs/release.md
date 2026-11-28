@@ -93,6 +93,10 @@ Fonte: Ajuda do Play Console, "App testing requirements for new personal develop
 
 Na prática: convide **15 ou mais** pessoas para ter folga, peça que fiquem inscritas e abram o app algumas vezes nas duas semanas, e não tire ninguém da lista no meio.
 
+### Textos, screenshots e vídeos das lojas
+
+Ficam em `fastlane/metadata`, `fastlane/screenshots` e `marketing/`. Quando a UI mudar, rode `scripts/store-assets.sh capture frame video` e `node scripts/validate-store-text.mjs`. O upload (`fastlane deliver` / `supply`) só depois da confirmação do Felipe: comandos em `marketing/README.md`.
+
 ## Roteiro de teste manual (testadores)
 
 Para cada item, anote aparelho, sistema, o que aconteceu e, se der, um print. Rode num aparelho de verdade (o simulador não tem câmera).
