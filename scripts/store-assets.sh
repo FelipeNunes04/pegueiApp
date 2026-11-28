@@ -10,7 +10,7 @@
 #   capture    abre o app em modo demo (-pegueiDemo) e captura as telas cruas
 #   frame      monta as artes finais (moldura + título) nos tamanhos das lojas
 #   video      grava e monta os vídeos de preview (App Store e YouTube/Play)
-#   marketing  posts, stories, one-pager PDF e media kit (scripts/marketing-assets.mjs)
+#   marketing  posts, stories, one-pager PDF, media kit e site/ (marketing-assets.mjs, build-site.mjs)
 #   validate   confere os limites de caractere dos textos das lojas
 #
 # Nada aqui envia arquivo para loja nenhuma. Upload: ver marketing/README.md.
@@ -311,7 +311,7 @@ step_video() {
 }
 
 # ---------------------------------------------------------------- marketing / validate
-step_marketing() { log "marketing"; node "$ROOT/scripts/marketing-assets.mjs"; }
+step_marketing() { log "marketing"; node "$ROOT/scripts/marketing-assets.mjs"; node "$ROOT/scripts/build-site.mjs"; }
 step_validate() { log "limites de texto"; node "$ROOT/scripts/validate-store-text.mjs"; }
 
 STEPS=("$@")
