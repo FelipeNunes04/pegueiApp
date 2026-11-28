@@ -66,3 +66,24 @@ final class FrameRingBuffer {
         return Array(frames[firstKeyframeIndex...])
     }
 }
+
+/// Video frames the encoder produced since the process started, for the
+/// analytics `dropped_frames_pct` sample (ios/Analytics/PegueiAnalytics.swift
+/// reads it every 5 min at most). The encoder callback only bumps it, under
+/// an uncontended lock: no allocation, no I/O, nothing else on that path.
+enum EncodedFrameStats {
+    private static let lock = NSLock()
+    private static var count: UInt64 = 0
+
+    static func noteFrame() {
+        lock.lock()
+        count &+= 1
+        lock.unlock()
+    }
+
+    static func value() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
