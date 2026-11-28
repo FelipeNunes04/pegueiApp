@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -23,7 +24,9 @@ import {
   type GalleryListItem,
 } from './utils/dateGroups';
 import { deleteClip, listSavedClips } from '../../shared/utils/files';
-import { track } from '../../analytics';
+import { setUserProperties, track } from '../../analytics';
+import { videosBucket } from '../../analytics/deviceStatus';
+import { clipAgeDays } from './utils/clipAnalytics';
 import { shareDestination } from './utils/shareDestination';
 import { maybePromptReview } from '../review/reviewPrompt';
 import { useRecordingStore } from '../../shared/store/recordingStore';
@@ -73,11 +76,17 @@ export function GalleryScreen({ navigation }: Props) {
   const numColumns = width >= WIDE_LAYOUT_BREAKPOINT ? 3 : 2;
   const cellSize = Math.floor(width / numColumns) - 2;
 
+  const openedLoggedRef = useRef(false);
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const found = await listSavedClips();
       setClips(found);
+      if (!openedLoggedRef.current) {
+        openedLoggedRef.current = true;
+        track('gallery_opened', { total_videos: found.length });
+        setUserProperties({ videos_saved_bucket: videosBucket(found.length) });
+      }
     } catch {
       // An unreadable clips folder (readDir/exists/mkdir failing) must not
       // surface as an unhandled rejection -- both callers (mount effect and
@@ -152,8 +161,17 @@ export function GalleryScreen({ navigation }: Props) {
       count === 1
         ? Share.open({ url: toFilePath(selectedClips[0]), type: 'video/mp4', failOnCancel: false })
         : Share.open({ urls: selectedClips.map(toFilePath), failOnCancel: false });
+    track('share_sheet_opened', { formato: 'original', marca_dagua: false, overlay: false });
     share
-      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: count }))
+      .then(result =>
+        track('video_shared', {
+          destino: shareDestination(result),
+          quantidade: count,
+          formato: 'original',
+          marca_dagua: false,
+          sponsor_id: '',
+        }),
+      )
       .catch(() => undefined);
   }, [selectedClips]);
 
@@ -168,6 +186,8 @@ export function GalleryScreen({ navigation }: Props) {
     await Promise.all(toDelete.map(c => deleteClip(c.path)));
     ids.forEach(id => removeClip(id));
     track('clip_deleted', { count: ids.length });
+    const now = Date.now();
+    toDelete.forEach(c => track('video_deleted', { idade_dias: clipAgeDays(c.createdAt, now) }));
     setSelectedIds(new Set());
   }, [pendingDeleteIds, clips, removeClip]);
 

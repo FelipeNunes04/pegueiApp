@@ -19,6 +19,7 @@ import { formatDuration } from '../../shared/utils/duration';
 import { deleteClip } from '../../shared/utils/files';
 import { track } from '../../analytics';
 import { shareDestination } from './utils/shareDestination';
+import { clipAgeDays, isFreshDiscard, playedSummary } from './utils/clipAnalytics';
 import { useRecordingStore } from '../../shared/store/recordingStore';
 import { colors } from '../../shared/theme/colors';
 import type { RootStackParamList } from '../../shared/types';
@@ -42,6 +43,19 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
   const [currentTime, setCurrentTime] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
+  // For video_played, sent once when the screen closes.
+  const watchedRef = useRef(0);
+  const durationRef = useRef(0);
+  const endedRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (watchedRef.current > 0 || endedRef.current) {
+        track('video_played', playedSummary(watchedRef.current, durationRef.current, endedRef.current));
+      }
+    },
+    [],
+  );
 
   // The clip can disappear from the store mid-view (e.g. deleted from
   // another instance of the gallery) -- bail out to Gallery rather than
@@ -56,8 +70,17 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
 
   const handleShare = useCallback(() => {
     if (!clip) return;
+    track('share_sheet_opened', { formato: 'original', marca_dagua: false, overlay: false });
     Share.open({ url: toFilePath(clip.path), type: 'video/mp4', failOnCancel: false })
-      .then(result => track('video_shared', { destino: shareDestination(result), quantidade: 1 }))
+      .then(result =>
+        track('video_shared', {
+          destino: shareDestination(result),
+          quantidade: 1,
+          formato: 'original',
+          marca_dagua: false,
+          sponsor_id: '',
+        }),
+      )
       .catch(() => undefined);
   }, [clip]);
 
@@ -67,6 +90,8 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
     await deleteClip(clip.path);
     removeClip(clip.id);
     track('clip_deleted', { count: 1 });
+    track('video_deleted', { idade_dias: clipAgeDays(clip.createdAt) });
+    if (isFreshDiscard(clip.createdAt)) track('capture_discarded', { motivo: 'excluido_na_previa' });
     navigation.goBack();
   }, [clip, removeClip, navigation]);
 
@@ -87,11 +112,18 @@ export function ClipPreviewScreen({ route, navigation }: Props) {
           style={StyleSheet.absoluteFill}
           resizeMode="contain"
           paused={paused}
-          onLoad={e => setDuration(e.duration)}
+          onLoad={e => {
+            setDuration(e.duration);
+            durationRef.current = e.duration;
+          }}
           onProgress={e => {
             if (!isSeeking) setCurrentTime(e.currentTime);
+            if (e.currentTime > watchedRef.current) watchedRef.current = e.currentTime;
           }}
-          onEnd={() => setPaused(true)}
+          onEnd={() => {
+            endedRef.current = true;
+            setPaused(true);
+          }}
         />
         {paused && (
           <View style={styles.centerPlayButton} pointerEvents="none">

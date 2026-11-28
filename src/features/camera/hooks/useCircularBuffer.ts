@@ -13,7 +13,8 @@ import { useCameraStore } from '../store/cameraStore';
 import { useRecordingStore } from '../../../shared/store/recordingStore';
 import { useSettingsStore } from '../../settings/store/settingsStore';
 import { encodeClipFilename } from '../../../shared/utils/files';
-import { track } from '../../../analytics';
+import { setUserProperties, startTrace, track, type TraceHandle } from '../../../analytics';
+import { noteBufferStarted, noteBufferStopped, noteCaptureSaved } from '../../../analytics/fishingSession';
 import { recordVideoSaved } from '../../review/reviewPrompt';
 import { captureErrorLabel, currentCaptureContext, lensForZoom, minutesSince } from '../utils/captureAnalytics';
 import { resolveSupportedFps, resolveSupportedQuality } from '../../../shared/utils/captureCapabilities';
@@ -119,7 +120,40 @@ function isNoRecordingInProgress(err: unknown): boolean {
 function logVideoSaved(durationSeconds: number) {
   const { resolucao, fps, lente } = currentCaptureContext();
   track('video_saved', { duracao_s: Math.round(durationSeconds), resolucao, fps, lente });
+  noteCaptureSaved();
   recordVideoSaved().catch(() => undefined);
+}
+
+// camera_cold_start: from the JS bundle starting to the first running
+// buffer, only when the app opens straight on the camera (App.tsx calls
+// markCameraColdStartEligible). Otherwise the trace is never stopped, so it
+// is never sent.
+let coldStartTrace: TraceHandle | null = null;
+let coldStartEligible = false;
+let coldStartDone = false;
+
+/** Starts camera_cold_start. Call at app start (App.tsx module scope). */
+export function markAppStartForCameraTrace(): void {
+  if (!coldStartTrace && !coldStartDone) coldStartTrace = startTrace('camera_cold_start');
+}
+
+/** The first screen is the camera: the first buffer start ends camera_cold_start. */
+export function markCameraColdStartEligible(): void {
+  coldStartEligible = true;
+}
+
+function finishColdStart(): void {
+  if (coldStartDone) return;
+  coldStartDone = true;
+  if (coldStartEligible) coldStartTrace?.stop();
+  coldStartTrace = null;
+}
+
+/** Tests only. */
+export function resetCameraColdStartForTests(): void {
+  coldStartTrace = null;
+  coldStartEligible = false;
+  coldStartDone = false;
 }
 
 export function useCircularBuffer() {
@@ -155,10 +189,13 @@ export function useCircularBuffer() {
   const finalizedPathRef = useRef<string | null>(null);
   // When the running buffer started, for buffer_stopped's duration. Null while stopped.
   const bufferStartedAtRef = useRef<number | null>(null);
+  // The buffer_start trace of the start() in flight.
+  const startTraceRef = useRef<TraceHandle | null>(null);
   const logBufferStopped = useCallback(() => {
     if (bufferStartedAtRef.current === null) return;
     track('buffer_stopped', { duracao_min: minutesSince(bufferStartedAtRef.current) });
     bufferStartedAtRef.current = null;
+    noteBufferStopped();
   }, []);
 
   // Errors that happen after startBuffering()'s promise already resolved
@@ -244,6 +281,7 @@ export function useCircularBuffer() {
 
       if (event.error || !event.path) {
         track('capture_failed', { erro: captureErrorLabel('finalized', event.error ?? event.reason) });
+        track('capture_discarded', { motivo: 'encerrada_sem_salvar' });
         const current = useRecordingStore.getState().phase;
         setError(finalizedMessage(event.reason, 'Não foi possível salvar o vídeo.'));
         setPhase(phaseAfterFinalized(current, event.reason));
@@ -307,6 +345,10 @@ export function useCircularBuffer() {
       if (resolvedFps !== fps) setFps(resolvedFps);
 
       const preset = VIDEO_QUALITY_PRESETS[resolvedQuality];
+      const bufferTrace = startTrace('buffer_start');
+      bufferTrace.putAttribute('resolucao', resolvedQuality);
+      bufferTrace.putAttribute('buffer_s', String(bufferSeconds));
+      startTraceRef.current = bufferTrace;
       // Set *before* the native call: startBuffering() resolves as soon as
       // the session is armed, and a setup failure (e.g. no back camera,
       // camera busy) arrives separately as a CircularBufferError event on
@@ -324,13 +366,25 @@ export function useCircularBuffer() {
         height: preset.height,
         fps: resolvedFps,
       });
+      startTraceRef.current?.stop();
+      startTraceRef.current = null;
+      finishColdStart();
       if (generation === lifecycleGenerationRef.current) {
         logBufferStopped();
         bufferStartedAtRef.current = Date.now();
-        track('buffer_started', { buffer_s: bufferSeconds, lente: lensForZoom(useCameraStore.getState().zoomFactor) });
+        const lente = lensForZoom(useCameraStore.getState().zoomFactor);
+        track('buffer_started', { buffer_s: bufferSeconds, lente });
+        setUserProperties({ buffer_s_preferido: String(bufferSeconds), lente_preferida: lente });
+        noteBufferStarted({ buffer_s: bufferSeconds, lente, resolucao: resolvedQuality, fps: resolvedFps });
       }
     } catch (err) {
+      // A failed start is not timed: the trace is dropped, not sent.
+      startTraceRef.current = null;
       track('capture_failed', { erro: captureErrorLabel('buffer_start', err) });
+      track('camera_init_failed', {
+        erro: captureErrorLabel('buffer_start', err),
+        lente: lensForZoom(useCameraStore.getState().zoomFactor),
+      });
       if (isMountedRef.current && generation === lifecycleGenerationRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível iniciar o buffer de vídeo.');
       }
@@ -440,6 +494,8 @@ export function useCircularBuffer() {
   }, [setPhase, setError]);
 
   const stopRecording = useCallback(async (): Promise<SavedClip | null> => {
+    const tappedAt = Date.now();
+    const saveTrace = startTrace('capture_save');
     setPhase('saving');
     try {
       const result = await CircularBufferModule.stopManualRecording();
@@ -464,6 +520,11 @@ export function useCircularBuffer() {
         addClip(clip);
         setPhase('buffering');
       }
+      const { buffer_s, resolucao } = currentCaptureContext();
+      saveTrace.putAttribute('resolucao', resolucao);
+      saveTrace.putAttribute('buffer_s', String(buffer_s));
+      saveTrace.stop();
+      track('capture_latency_measured', { toque_ate_salvo_ms: Date.now() - tappedAt, buffer_s, resolucao });
       logVideoSaved(result.durationSeconds);
       return clip;
     } catch (err) {
@@ -480,6 +541,7 @@ export function useCircularBuffer() {
       }
       recordingActiveRef.current = false;
       track('capture_failed', { erro: captureErrorLabel('record_stop', err) });
+      track('capture_discarded', { motivo: 'erro_salvar' });
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Não foi possível salvar o clipe.');
         // The native buffer keeps running regardless of whether this one

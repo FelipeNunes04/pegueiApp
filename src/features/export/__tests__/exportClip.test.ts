@@ -83,14 +83,22 @@ describe('exportClip', () => {
   it('propagates a native failure without logging an export', async () => {
     mockedExport.mockRejectedValueOnce(new Error('E_EXPORT_FAILED'));
     await expect(exportClip({ clipPath: '/clips/a.mp4', portrait9x16: true, species: '', weight: '' })).rejects.toThrow();
-    expect(mockedTrack).not.toHaveBeenCalled();
+    expect(mockedTrack).not.toHaveBeenCalledWith('video_exported', expect.anything());
+    expect(mockedTrack).toHaveBeenCalledWith('export_failed', { erro: 'E_EXPORT_FAILED', etapa: 'export' });
   });
 
   it('logs the share destination of the exported file', async () => {
     (Share.open as jest.Mock).mockResolvedValueOnce({ success: true, message: 'com.burbn.instagram.shareextension' });
     await shareExported('/mock/caches/exports/out.mp4');
     expect(Share.open).toHaveBeenCalledWith({ url: 'file:///mock/caches/exports/out.mp4', type: 'video/mp4', failOnCancel: false });
-    expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'instagram', quantidade: 1 });
+    expect(mockedTrack).toHaveBeenCalledWith('share_sheet_opened', { formato: '9_16', marca_dagua: false, overlay: false });
+    expect(mockedTrack).toHaveBeenCalledWith('video_shared', {
+      destino: 'instagram',
+      quantidade: 1,
+      formato: '9_16',
+      marca_dagua: false,
+      sponsor_id: '',
+    });
   });
 
   it('normalises species for analytics', () => {

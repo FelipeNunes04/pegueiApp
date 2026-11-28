@@ -12,6 +12,13 @@ import {
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { initAnalytics, screen, track } from './src/analytics';
+import { initFishingSessions } from './src/analytics/fishingSession';
+import { startLifecycleAnalytics } from './src/analytics/lifecycle';
+import {
+  markAppStartForCameraTrace,
+  markCameraColdStartEligible,
+} from './src/features/camera/hooks/useCircularBuffer';
+import { installStorageWarning } from './src/features/camera/storageWarning';
 import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
 import { OnboardingProfileScreen } from './src/features/onboarding/OnboardingProfileScreen';
 import { PermissionsScreen } from './src/features/permissions/PermissionsScreen';
@@ -31,6 +38,9 @@ import type { RootStackParamList } from './src/shared/types';
 import { styles } from './App.styles';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+// As early as possible: camera_cold_start counts from the bundle starting.
+markAppStartForCameraTrace();
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -55,6 +65,9 @@ function App() {
   useEffect(() => {
     initAnalytics();
     track('app_opened');
+    startLifecycleAnalytics();
+    installStorageWarning();
+    initFishingSessions().catch(() => undefined);
     useProfileStore.getState().hydrate();
     // Background only: the app never waits for Remote Config.
     initRemoteConfig()
@@ -73,6 +86,7 @@ function App() {
     : allGranted
     ? 'Camera'
     : 'Permissions';
+  if (initialRouteName === 'Camera') markCameraColdStartEligible();
 
   return (
     <SafeAreaProvider>

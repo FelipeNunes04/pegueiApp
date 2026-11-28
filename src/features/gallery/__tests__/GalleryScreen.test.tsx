@@ -122,7 +122,7 @@ describe('GalleryScreen', () => {
     await fireEvent.press(getByTestId('selection-share'));
 
     expect(mockedShare.open).toHaveBeenCalled();
-    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1 }));
+    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1, formato: 'original', marca_dagua: false, sponsor_id: '' }));
   });
 
   describe('selection mode', () => {
@@ -215,7 +215,7 @@ describe('GalleryScreen', () => {
         urls: [`file://${CLIPS_DIR}/${A}`, `file://${CLIPS_DIR}/${C}`],
         failOnCancel: false,
       });
-      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 2 }));
+      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 2, formato: 'original', marca_dagua: false, sponsor_id: '' }));
     });
 
     it('logs a closed share sheet as cancelado', async () => {
@@ -225,7 +225,7 @@ describe('GalleryScreen', () => {
       await fireEvent(getByTestId(`clip-${B}`), 'longPress');
       await fireEvent.press(getByTestId('selection-share'));
 
-      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'cancelado', quantidade: 1 }));
+      await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'cancelado', quantidade: 1, formato: 'original', marca_dagua: false, sponsor_id: '' }));
     });
 
     it('sharing a single clip uses a single file:// URL with the video MIME type', async () => {

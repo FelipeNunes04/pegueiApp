@@ -8,9 +8,28 @@ import {
   type Permission,
 } from 'react-native-permissions';
 import type { PermissionKey, PermissionStatus } from '../../../shared/types';
-import { track } from '../../../analytics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { track, type PermissionName } from '../../../analytics';
 
 type PermissionMap = Record<PermissionKey, PermissionStatus>;
+
+const PERMISSION_NAME: Record<PermissionKey, PermissionName> = { camera: 'camera', microphone: 'mic' };
+const PROMPT_COUNT_KEY = 'peguei:permissionPromptCount';
+
+/** How many times the app asked for this permission, this one included. Kept on the phone. */
+async function nextPromptCount(key: PermissionKey): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(PROMPT_COUNT_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    const counts = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    const current = typeof counts[key] === 'number' ? (counts[key] as number) : 0;
+    const next = current + 1;
+    await AsyncStorage.setItem(PROMPT_COUNT_KEY, JSON.stringify({ ...counts, [key]: next }));
+    return next;
+  } catch {
+    return 1;
+  }
+}
 
 function resolvePermission(key: PermissionKey): Permission | null {
   if (Platform.OS === 'android') {
@@ -94,6 +113,9 @@ export function usePermissions() {
     if (status === 'denied' || status === 'blocked') {
       track('permission_denied', { permission: key, status });
     }
+    nextPromptCount(key)
+      .then(count => track('permission_result', { permission: PERMISSION_NAME[key], granted: status === 'granted', prompt_count: count }))
+      .catch(() => undefined);
     return status;
   }, []);
 

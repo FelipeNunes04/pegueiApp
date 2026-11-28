@@ -110,7 +110,7 @@ describe('ClipPreviewScreen', () => {
     expect(mockedShare.open).toHaveBeenCalledWith(
       expect.objectContaining({ url: 'file:///clips/clip_1_d12000.mp4', type: 'video/mp4' }),
     );
-    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1 }));
+    await waitFor(() => expect(mockedTrack).toHaveBeenCalledWith('video_shared', { destino: 'outro', quantidade: 1, formato: 'original', marca_dagua: false, sponsor_id: '' }));
   });
 
   const renderPreview = (clipId = 'clip_1') =>
