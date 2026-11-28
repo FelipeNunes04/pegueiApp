@@ -267,7 +267,7 @@ step_video() {
   local music; music=$(music_src)
   local audio_in=(-f lavfi -t 28 -i anullsrc=channel_layout=stereo:sample_rate=48000)
   [ -n "$music" ] && audio_in=(-t 28 -i "$music")
-  # 886x1920, 30 fps, H.264 High 4.0, ~10 Mb/s, AAC estéreo 256 kb/s: spec da Apple para 6,9".
+  # 886x1920, 30 fps, H.264 High 4.0, 10 Mb/s CBR (a Apple pede 10-12 Mb/s), AAC estéreo 256 kb/s.
   # 0-12 s: espera + toque + salvo | 12-24,5 s: o clipe salvo tocando no app | 24,5-28 s: cartão final.
   ffmpeg -y -loglevel error \
     -ss "$s0" -t 12.5 -i "$WORK/story.mov" \
@@ -286,7 +286,7 @@ step_video() {
       [A][B][C]concat=n=3:v=1:a=0,format=yuv420p[v];
       [7:a]aformat=sample_rates=48000:channel_layouts=stereo,afade=t=out:st=26.5:d=1.5[aud]" \
     -map "[v]" -map "[aud]" -t 28 -r 30 \
-    -c:v libx264 -preset veryfast -profile:v high -level 4.0 -b:v 10M -maxrate 12M -bufsize 20M \
+    -c:v libx264 -preset veryfast -profile:v high -level 4.0 -b:v 10M -minrate 10M -maxrate 10M -bufsize 10M -x264-params nal-hrd=cbr \
     -c:a aac -b:a 256k -ar 48000 -ac 2 -movflags +faststart \
     "$WORK/preview-ios-base.mp4"
   cp "$WORK/preview-ios-base.mp4" "$OUTV/app-preview-ios-886x1920.mp4"
