@@ -264,3 +264,10 @@ Supersedes the "Known gaps" and `PegueiDiag` notes in the section above, plus it
 - **`PegueiDiag` removed**: the "Buffer vazio" root cause was never confirmed on a device. A leftover log file is deleted when the camera controller initializes.
 - **Media permissions removed**: clips are app-private, so JS no longer requests storage/Photos. `NSPhotoLibraryAddUsageDescription` stays because the share sheet's "Save Video" needs it. On Android, `WRITE_EXTERNAL_STORAGE` and `READ_EXTERNAL_STORAGE` need `tools:node="remove"`: libraries declare them uncapped.
 - **Still open**: the ring buffer itself has no cap on Android; a give-up on iOS reports `healthy` plus an error event because the contract has no `failed` state; audio in the losing format is dropped after a mid-recording route change. **All camera, recovery and save paths still need a physical-device pass on both platforms.**
+
+## Store-asset demo mode (2026-11-28)
+
+- **Why:** the simulator has no camera, so store screenshots and App Preview footage showed "Nenhuma câmera traseira disponível". The old `store-screenshots/_tools/screenshot-mode.patch` was a local-only patch; it is replaced by `src/demo/`, which is committed and tested.
+- **Gating:** `DEMO_MODE = __DEV__ && <launch argument -pegueiDemo>` (iOS `Settings`, i.e. NSUserDefaults). In Release `__DEV__` is false and the minifier removes the launch-argument read entirely (verified: the string `pegueiDemo` is absent from the production bundle). The demo modules themselves are still in the bundle as dead code; acceptable for their size, and they can't be reached.
+- **Zero native impact:** no Swift/Kotlin change. CameraScreen picks `useDemoCircularBuffer` / `useDemoZoom` / `DemoCameraPreview` at module load instead of the real hook/preview only when `DEMO_MODE` is true, so a normal build never imports a different code path at runtime and the native buffer thread is untouched.
+- **Android:** no demo mode (launch arguments need native code to read on Android). Play screenshots reuse the iPhone captures with the iOS status bar cropped. See `marketing/README.md`.
