@@ -1,6 +1,6 @@
 # Privacy Policy — Peguei
 
-**Last updated:** November 26, 2026
+**Last updated:** November 28, 2026
 
 This Privacy Policy describes how the **Peguei** app ("the App") handles user information.
 
@@ -31,6 +31,9 @@ The App uses **Firebase Analytics** (a Google service) to understand, in aggrega
 - **Usage events**, never the video content: buffer started and stopped (duration and lens), recording started, video saved (duration, resolution, frame rate and lens), recording failures (error code, no file names), video exported (with or without watermark and caption), which app a video was shared to (WhatsApp, Instagram, TikTok, YouTube, Facebook or other), review prompt shown, and whether the donation Pix key was copied.
 - **Optional onboarding answers**: kind of fishing and Brazilian state. You can skip this step.
 - **Exported video caption**: the species name you type and whether you entered a weight (the weight value itself is not sent).
+- **Fishing sessions and device state**: how long the buffer ran, how many videos were saved in the session, battery level, the device's thermal state (nominal, fair, serious or critical), memory used by the App, dropped frames and the connection type (Wi-Fi, cellular or offline). On Android the free storage range is also sent (for example, "2 to 5 GB"); on iPhone free storage is only used on the device, to warn you when it is running out.
+- **Diagnostics**: crash and error reports through **Firebase Crashlytics**, and camera start, save and export times through **Firebase Performance Monitoring**. Reports include the recording settings (buffer length, lens, resolution) and the thermal state, never videos or file names.
+- **Pesca Certa integration**: if Pesca Certa opens Peguei, or you send a catch to the Pesca Certa diary, we record that it happened and the species sent. The link carries only the species, the date and, when known, an approximate area (a geohash of about 5 km), never the exact spot.
 - Standard Firebase technical identifiers (app install ID, device model, OS version and app version). We do not collect name, email, phone number, device location or the advertising identifier (Ad ID).
 
 You can turn this off at any time in **Settings → Privacy → Send usage data**. The choice is stored only on your device.
