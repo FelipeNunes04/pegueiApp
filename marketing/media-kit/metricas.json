@@ -1,0 +1,34 @@
+{
+  "mes": "2026-12",
+  "fonte": "placeholder: rode node scripts/media-kit.mjs --bq PROJETO.analytics_XXXX --mes AAAA-MM",
+  "gerado_em": null,
+  "usuarios_ativos_total": null,
+  "dau_medio": null,
+  "usuarios_ativos_por_uf": [
+    { "uf": "PI", "usuarios_ativos": null },
+    { "uf": "MA", "usuarios_ativos": null },
+    { "uf": "CE", "usuarios_ativos": null }
+  ],
+  "sessoes": {
+    "sessoes": null,
+    "pescadores": null,
+    "duracao_media_min": null,
+    "capturas_por_sessao": null,
+    "pct_sessoes_com_captura": null
+  },
+  "compartilhamentos_por_destino": [
+    { "destino": "whatsapp", "videos_compartilhados": null },
+    { "destino": "instagram", "videos_compartilhados": null },
+    { "destino": "tiktok", "videos_compartilhados": null },
+    { "destino": "youtube", "videos_compartilhados": null }
+  ],
+  "patrocinadores": [
+    {
+      "sponsor_id": "exemplo_loja",
+      "videos_com_a_marca": null,
+      "pescadores": null,
+      "compartilhados_com_a_marca": null,
+      "cliques_no_patrocinador": null
+    }
+  ]
+}
