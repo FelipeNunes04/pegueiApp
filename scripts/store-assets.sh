@@ -208,7 +208,8 @@ step_frame() {
   local img="$FL/metadata/android/pt-BR/images"
   render 1024 500 "$img/featureGraphic.png" "file://$TPL/feature-graphic.html"
   no_alpha "$img/featureGraphic.png"
-  sips -z 512 512 "$TPL/icon-1024.png" --out "$img/icon.png" >/dev/null
+  # Play pede PNG de 32 bits (com canal alfa) para o ícone.
+  ffmpeg -y -loglevel error -i "$TPL/icon-1024.png" -vf scale=512:512 -pix_fmt rgba "$img/icon.png"
   echo "ok $img/featureGraphic.png $img/icon.png"
 }
 
