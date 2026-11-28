@@ -36,6 +36,8 @@ import { usePermissions } from './src/features/permissions/hooks/usePermissions'
 import { colors } from './src/shared/theme/colors';
 import type { RootStackParamList } from './src/shared/types';
 import { styles } from './App.styles';
+import { DEMO_MODE, DEMO_SCENE } from './src/demo/demoMode';
+import { runDemoNavigation } from './src/demo/demoNavigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -75,18 +77,22 @@ function App() {
       .catch(() => undefined);
   }, []);
 
-  if (!hydrated || (hasCompletedOnboarding && !checked)) {
+  // Store-asset demo mode (debug builds only, see src/demo/demoMode.ts):
+  // straight to the camera, no onboarding or permission checks.
+  if (!DEMO_MODE && (!hydrated || (hasCompletedOnboarding && !checked))) {
     // Reading the "onboarding seen" flag from AsyncStorage is near-instant; a
     // bare background view avoids flashing the wrong initial route.
     return <View style={styles.hydrating} testID="app-hydrating" />;
   }
 
-  const initialRouteName: keyof RootStackParamList = !hasCompletedOnboarding
+  const initialRouteName: keyof RootStackParamList = DEMO_MODE
+    ? 'Camera'
+    : !hasCompletedOnboarding
     ? 'Onboarding'
     : allGranted
     ? 'Camera'
     : 'Permissions';
-  if (initialRouteName === 'Camera') markCameraColdStartEligible();
+  if (initialRouteName === 'Camera' && !DEMO_MODE) markCameraColdStartEligible();
 
   return (
     <SafeAreaProvider>
@@ -95,6 +101,7 @@ function App() {
         ref={navigationRef}
         onReady={() => {
           currentRouteNameRef.current = navigationRef.getCurrentRoute()?.name;
+          if (DEMO_SCENE) runDemoNavigation(DEMO_SCENE, navigationRef).catch(() => undefined);
         }}
         onStateChange={() => {
           const previousRouteName = currentRouteNameRef.current;
@@ -150,7 +157,7 @@ function App() {
           <Stack.Screen
             name="ExportClip"
             component={ExportScreen}
-            options={{ title: 'Exportar vídeo' }}
+            options={{ title: 'Exportar vídeo', headerBackTitle: 'Vídeo' }}
           />
           <Stack.Screen
             name="Tips"
