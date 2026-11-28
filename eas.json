@@ -4,10 +4,30 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "development": {
+    "dev": {
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development"
+    },
+    "staging": {
+      "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "local"
+      }
+    },
+    "prod": {
+      "autoIncrement": true,
+      "environment": "production",
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "local"
+      }
+    },
+    "development": {
+      "extends": "dev"
     },
     "preview": {
       "distribution": "internal",
@@ -30,6 +50,16 @@
     }
   },
   "submit": {
+    "prod": {
+      "ios": {
+        "ascAppId": "6790596334"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "alpha",
+        "releaseStatus": "completed"
+      }
+    },
     "production": {
       "ios": {
         "ascAppId": "6790596334"

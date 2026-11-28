@@ -25,7 +25,16 @@
     "submit:ios": "eas submit --platform ios --latest",
     "build:android:preview": "eas build --platform android --profile preview-android",
     "build:android": "eas build --platform android --profile production-android",
-    "submit:android": "eas submit --platform android --latest"
+    "submit:android": "eas submit --platform android --latest",
+    "typecheck": "tsc --noEmit",
+    "preflight": "bash scripts/preflight.sh",
+    "version:bump": "bash scripts/bump-version.sh",
+    "build:ios:staging": "eas build --platform ios --profile staging",
+    "build:android:staging": "eas build --platform android --profile staging",
+    "build:ios:prod": "eas build --platform ios --profile prod",
+    "build:android:prod": "eas build --platform android --profile prod",
+    "release:ios:testflight": "bash scripts/preflight.sh && eas build --platform ios --profile prod --auto-submit-with-profile prod",
+    "release:android:closed": "bash scripts/preflight.sh && eas build --platform android --profile prod --auto-submit-with-profile prod"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
